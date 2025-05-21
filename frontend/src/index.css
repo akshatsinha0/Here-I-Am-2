@@ -1,0 +1,111 @@
+:root {
+  /* Light Theme */
+  --bg-primary: #ffffff;
+  --bg-secondary: #f5f7fa;
+  --bg-sidebar: #f0f4f8;
+  --text-primary: #333333;
+  --text-secondary: #666666;
+  --primary-color: #2b5eff;
+  --secondary-color: #00b4ff;
+  --accent-color: #6c5ce7;
+  --success-color: #0cce6b;
+  --warning-color: #ffb400;
+  --error-color: #ff3838;
+  --border-light: rgba(0, 0, 0, 0.1);
+  --shadow-light: 0 2px 10px rgba(0, 0, 0, 0.05);
+  --gradient-start: #eef2ff;
+  --gradient-end: #e6f7ff;
+  --message-sent: #e1f5fe;
+  --message-received: #f5f5f5;
+  --online-indicator: #0cce6b;
+}
+
+[data-theme="dark"] {
+  /* Dark Theme */
+  --bg-primary: #1a1a2e;
+  --bg-secondary: #16213e;
+  --bg-sidebar: #0f3460;
+  --text-primary: #e7e7e7;
+  --text-secondary: #a0a0a0;
+  --primary-color: #3a86ff;
+  --secondary-color: #00b4ff;
+  --accent-color: #6c5ce7;
+  --success-color: #0cce6b;
+  --warning-color: #ffb400;
+  --error-color: #ff3838;
+  --border-light: rgba(255, 255, 255, 0.1);
+  --shadow-light: 0 4px 12px rgba(0, 0, 0, 0.2);
+  --gradient-start: #0f3460;
+  --gradient-end: #1a1a2e;
+  --message-sent: #1e3a8a;
+  --message-received: #404258;
+  --online-indicator: #0cce6b;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+html, body {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+}
+
+button, input, textarea {
+  font-family: inherit;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: rgba(155, 155, 155, 0.5);
+  border-radius: 20px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(155, 155, 155, 0.8);
+}
+
+.no-select {
+  user-select: none;
+}
+
+.ripple {
+  position: relative;
+  overflow: hidden;
+}
+
+.ripple:after {
+  content: "";
+  display: block;
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  background-image: radial-gradient(circle, #fff 10%, transparent 10.01%);
+  background-repeat: no-repeat;
+  background-position: 50%;
+  transform: scale(10, 10);
+  opacity: 0;
+  transition: transform 0.4s, opacity 0.8s;
+}
+
+.ripple:active:after {
+  transform: scale(0, 0);
+  opacity: 0.3;
+  transition: 0s;
+}
