@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
-import { FiMail, FiLock, FiUser } from 'react-icons/fi';
+import { FiMail, FiLock, FiUser, FiEye, FiEyeOff } from 'react-icons/fi';
 import '../../styles/Auth.css';
 
 interface SignInFormProps {
@@ -12,12 +12,17 @@ interface SignInFormProps {
 const SignInForm = ({ onSubmit, onToggleForm, isLoading }: SignInFormProps) => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (username && password) {
       await onSubmit(username, password);
     }
+  };
+
+  const togglePasswordVisibility = () => {
+    setShowPassword(!showPassword);
   };
 
   return (
@@ -50,12 +55,19 @@ const SignInForm = ({ onSubmit, onToggleForm, isLoading }: SignInFormProps) => {
             <FiLock />
           </div>
           <input 
-            type="password" 
+            type={showPassword ? "text" : "password"}
             placeholder="Password" 
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             required
           />
+          <div 
+            className="password-toggle-icon" 
+            onClick={togglePasswordVisibility}
+            title={showPassword ? "Hide password" : "Show password"}
+          >
+            {showPassword ? <FiEyeOff /> : <FiEye />}
+          </div>
         </div>
         
         <div className="form-options">

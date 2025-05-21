@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
-import { FiMail, FiLock, FiUser, FiShield } from 'react-icons/fi';
+import { FiMail, FiLock, FiUser, FiShield, FiEye, FiEyeOff, FiKey } from 'react-icons/fi';
+import PasswordGenerator from './PasswordGenerator';
 import '../../styles/Auth.css';
 
 interface SignUpFormProps {
@@ -15,6 +16,9 @@ const SignUpForm = ({ onSubmit, onToggleForm, isLoading }: SignUpFormProps) => {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [agreedToTerms, setAgreedToTerms] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [showPasswordGenerator, setShowPasswordGenerator] = useState(false);
   
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -32,6 +36,23 @@ const SignUpForm = ({ onSubmit, onToggleForm, isLoading }: SignUpFormProps) => {
   };
 
   const passwordsMatch = password && confirmPassword && password === confirmPassword;
+
+  const togglePasswordVisibility = () => {
+    setShowPassword(!showPassword);
+  };
+
+  const toggleConfirmPasswordVisibility = () => {
+    setShowConfirmPassword(!showConfirmPassword);
+  };
+
+  const handleGeneratePassword = (generatedPassword: string) => {
+    setPassword(generatedPassword);
+    setConfirmPassword(generatedPassword);
+  };
+
+  const handleOpenPasswordGenerator = () => {
+    setShowPasswordGenerator(true);
+  };
 
   return (
     <motion.div 
@@ -78,35 +99,64 @@ const SignUpForm = ({ onSubmit, onToggleForm, isLoading }: SignUpFormProps) => {
           }
         </div>
         
-        <div className="form-group">
+        <div className="form-group password-field">
           <div className="input-icon">
             <FiLock />
           </div>
           <input 
-            type="password" 
+            type={showPassword ? "text" : "password"}
             placeholder="Create a secure password" 
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             required
             className={password && !isValidPassword(password) ? 'input-error' : ''}
           />
+          <div className="password-actions">
+            <button
+              type="button"
+              className="password-toggle-icon generator-icon" 
+              onClick={handleOpenPasswordGenerator}
+              title="Generate secure password"
+              aria-label="Open password generator"
+            >
+              <FiKey />
+            </button>
+            <button
+              type="button" 
+              className="password-toggle-icon" 
+              onClick={togglePasswordVisibility}
+              title={showPassword ? "Hide password" : "Show password"}
+              aria-label={showPassword ? "Hide password" : "Show password"}
+            >
+              {showPassword ? <FiEyeOff /> : <FiEye />}
+            </button>
+          </div>
           {password && !isValidPassword(password) && 
             <p className="error-message">Password must be at least 8 characters</p>
           }
         </div>
         
-        <div className="form-group">
+        <div className="form-group password-field">
           <div className="input-icon">
             <FiShield />
           </div>
           <input 
-            type="password" 
+            type={showConfirmPassword ? "text" : "password"}
             placeholder="Confirm your password" 
             value={confirmPassword}
             onChange={(e) => setConfirmPassword(e.target.value)}
             required
             className={confirmPassword && !passwordsMatch ? 'input-error' : ''}
           />
+          <button
+            type="button"
+            className="password-toggle-icon" 
+            onClick={toggleConfirmPasswordVisibility}
+            title={showConfirmPassword ? "Hide password" : "Show password"}
+            aria-label={showConfirmPassword ? "Hide password" : "Show password"}
+          >
+            {showConfirmPassword ? <FiEyeOff /> : <FiEye />}
+          </button>
           {confirmPassword && !passwordsMatch && 
             <p className="error-message">Passwords don't match</p>
           }
@@ -164,6 +214,12 @@ const SignUpForm = ({ onSubmit, onToggleForm, isLoading }: SignUpFormProps) => {
           Sign In
         </motion.button>
       </div>
+
+      <PasswordGenerator 
+        isOpen={showPasswordGenerator}
+        onClose={() => setShowPasswordGenerator(false)}
+        onSelectPassword={handleGeneratePassword}
+      />
     </motion.div>
   );
 };

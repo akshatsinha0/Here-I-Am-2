@@ -133,10 +133,7 @@ const AppContent = () => {
             transition={{ type: 'spring', stiffness: 300, damping: 30 }}
           >
             <OnlineUsers onSelectUser={(userId) => {
-              // Logic to start a new chat with this user
               console.log(`Starting chat with user ${userId}`);
-              // In a real app, you would create a new chat and then:
-              // setSelectedChat(newChatId);
               if (isMobile) setShowSidebar(false);
             }} />
           </motion.div>
