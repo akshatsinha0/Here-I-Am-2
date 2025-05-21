@@ -134,3 +134,101 @@
   font-weight: 600;
   cursor: pointer;
 }
+
+/* Add this to your Navigation.css */
+.user-profile {
+  position: relative;
+  cursor: pointer;
+}
+
+.login-button {
+  padding: 8px 12px;
+  color: white;
+  font-size: 14px;
+  font-weight: 500;
+  border-radius: 4px;
+  background: var(--primary-color);
+  transition: all 0.2s ease;
+}
+
+.login-button:hover {
+  background: var(--secondary-color);
+}
+
+.user-menu {
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-bottom: 8px;
+  width: 280px;
+  background-color: var(--bg-primary);
+  border-radius: 8px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+  overflow: hidden;
+  z-index: 100;
+}
+
+.user-menu-header {
+  padding: 16px;
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid var(--border-light);
+}
+
+.user-menu-header .user-avatar {
+  margin-right: 12px;
+}
+
+.user-info {
+  flex: 1;
+  overflow: hidden;
+}
+
+.user-info h4 {
+  margin: 0;
+  font-size: 16px;
+  color: var(--text-primary);
+}
+
+.user-info p {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.user-menu-items {
+  padding: 8px 0;
+}
+
+.user-menu-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding: 10px 16px;
+  border: none;
+  background: none;
+  color: var(--text-primary);
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.user-menu-item:hover {
+  background-color: var(--bg-secondary);
+}
+
+.user-menu-item svg {
+  margin-right: 8px;
+  font-size: 16px;
+  color: var(--text-secondary);
+}
+
+.user-menu-item.logout {
+  color: var(--error-color);
+}
+
+.user-menu-item.logout svg {
+  color: var(--error-color);
+}
