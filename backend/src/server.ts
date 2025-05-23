@@ -77,32 +77,41 @@ const io: SocketServer = new SocketServer(server, {
   },
   cors: {
     origin: "http://localhost:5173",
-    methods: ["GET", "POST"],
+    allowedHeaders: ["authorization"],
     credentials: true
   }
 });
 
-// Socket.IO authentication middleware
+// Enhanced Socket.IO authentication middleware
 io.use(async (socket, next) => {
   try {
-    const token = socket.handshake.auth.token;
-    if (!token) throw new Error('Authentication required');
+    const authHeader = socket.handshake.headers.authorization;
+    if (!authHeader) throw new Error('Authorization header missing');
+    
+    const token = authHeader.split(' ')[1];
+    if (!token) throw new Error('Authentication token missing');
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret') as { userId: string };
     const user = await User.findById(decoded.userId).select('-password');
     
     if (!user) throw new Error('User not found');
     
-    // Attach authenticated user to socket
-    socket.data.user = user;
+    // Attach user data with proper typing
+    socket.data.user = {
+      _id: user._id.toString(),
+      username: user.username,
+      email: user.email,
+      avatar: user.avatar
+    };
+    
     next();
   } catch (error) {
-    console.error('Authentication error:', error);
+    console.error('Socket authentication error:', error);
     next(new Error('Authentication failed'));
   }
 });
 
-// In-memory stores
+// In-memory stores with type safety
 const activeUsers = new Map<string, UserData & { socketId: string; lastSeen: string }>();
 const conversations = new Map<string, Conversation>();
 const messages = new Map<string, any[]>();
@@ -111,11 +120,13 @@ const tempIdMap = new Map<string, string>();
 // Socket.IO connection handler
 io.on('connection', (socket: Socket) => {
   const user = socket.data.user;
+  if (!user) return socket.disconnect(true);
+
   console.log(`New connection: ${user.username} (${user._id})`);
 
-  // Add user to active users
-  activeUsers.set(user._id.toString(), {
-    userId: user._id.toString(),
+  // Add user to active users with type-safe data
+  activeUsers.set(user._id, {
+    userId: user._id,
     username: user.username,
     email: user.email,
     avatar: user.avatar || '/default-avatar.png',
@@ -124,12 +135,15 @@ io.on('connection', (socket: Socket) => {
   });
 
   // Join user to their personal room
-  socket.join(user._id.toString());
+  socket.join(user._id);
 
   // Session reconnection handler
   socket.on('session_reconnect', () => {
-    activeUsers.get(user._id.toString())!.socketId = socket.id;
-    console.log(`User reconnected: ${user.username}`);
+    const currentUser = activeUsers.get(user._id);
+    if (currentUser) {
+      currentUser.socketId = socket.id;
+      console.log(`User reconnected: ${user.username}`);
+    }
   });
 
   // Conversation creation handler
@@ -146,7 +160,7 @@ io.on('connection', (socket: Socket) => {
     try {
       const translator = short();
       const isSelfChat = !!data.isSelfChat;
-      const userId = user._id.toString();
+      const userId = user._id;
 
       // Validate target user exists
       if (!isSelfChat) {
@@ -194,11 +208,10 @@ io.on('connection', (socket: Socket) => {
       });
     } catch (error) {
       console.error('Conversation creation error:', error);
-      if (error instanceof Error) {
-        callback({ success: false, error: error.message });
-      } else {
-        callback({ success: false, error: 'Unknown error' });
-      }
+      callback({ 
+        success: false, 
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
     }
   });
 
@@ -216,17 +229,17 @@ io.on('connection', (socket: Socket) => {
 
       if (!conversation) throw new Error('Conversation not found');
 
-      // Create new message
+      // Create new message with timestamp
       const newMessage = {
         id: short().new(),
         text: data.message.text,
-        senderId: user._id.toString(),
+        senderId: user._id,
         timestamp: new Date().toISOString(),
         status: 'sent' as const,
         replyTo: data.message.replyTo
       };
 
-      // Store message
+      // Update messages store
       messages.set(actualConversationId, [
         ...(messages.get(actualConversationId) || []),
         newMessage
@@ -245,18 +258,17 @@ io.on('connection', (socket: Socket) => {
       callback({ success: true });
     } catch (error) {
       console.error('Message sending error:', error);
-      if (error instanceof Error) {
-        callback({ success: false, error: error.message });
-      } else {
-        callback({ success: false, error: 'Unknown error' });
-      }
+      callback({ 
+        success: false, 
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
     }
   });
 
   // Disconnection handler
   socket.on('disconnect', (reason: string) => {
     console.log(`Disconnect (${socket.id}): ${reason}`);
-    activeUsers.delete(user._id.toString());
+    activeUsers.delete(user._id);
     io.emit('online_users', Array.from(activeUsers.values()));
   });
 });

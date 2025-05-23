@@ -1,14 +1,6 @@
 import { io, Socket } from 'socket.io-client';
 
-// User data interface
-interface UserData {
-  userId: string;
-  username: string;
-  email: string;
-  avatar: string;
-}
-
-// Socket event interfaces
+// Event type definitions
 interface ServerToClientEvents {
   online_users: (users: any[]) => void;
   new_message: (data: any) => void;
@@ -18,7 +10,7 @@ interface ServerToClientEvents {
 }
 
 interface ClientToServerEvents {
-  user_connected: (userData: UserData, callback: (response: any) => void) => void;
+  user_connected: (callback: (response: any) => void) => void;
   user_disconnected: (data: { userId: string }) => void;
   get_online_users: (callback?: (response: any) => void) => void;
   send_message: (data: any, callback: (response: any) => void) => void;
@@ -33,7 +25,7 @@ class SocketService {
   private connectionPromise: Promise<CustomSocket> | null = null;
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 5;
-  private connectionTimeout = 10000; // 10 seconds
+  private connectionTimeout = 10000;
 
   private constructor() {}
 
@@ -44,89 +36,39 @@ class SocketService {
     return SocketService.instance;
   }
 
-  /**
-   * Connect to socket server with user data
-   */
-  async connect(options: UserData | string): Promise<CustomSocket> {
-    // If we're already connecting, return the existing promise
-    if (this.connectionPromise && this.socket) {
+  async connect(token: string): Promise<CustomSocket> {
+    if (this.connectionPromise && this.socket?.connected) {
       return this.connectionPromise;
     }
 
-    // Reset connection state
     this.reconnectAttempts = 0;
     
-    // Create new connection promise
-    this.connectionPromise = new Promise<CustomSocket>((resolve, reject) => {
-      const serverUrl = 'http://localhost:3001';
-      let userData: UserData;
-      
-      // Handle different parameter types
-      if (typeof options === 'string') {
-        // If passed a string, assume it's a user ID
-        userData = {
-          userId: options,
-          username: 'Unknown',
-          email: 'unknown@example.com',
-          avatar: '/default-avatar.png'
-        };
-      } else {
-        // Otherwise use the provided user data
-        userData = options;
-      }
-      
-      // Ensure we have a valid user ID
-      if (!userData.userId) {
-        reject(new Error('Invalid user ID provided'));
-        this.connectionPromise = null;
-        return;
-      }
-
-      console.log(`Connecting socket with user ID: ${userData.userId}`);
-      
-      // Initialize socket connection
-      this.socket = io(serverUrl, {
+    this.connectionPromise = new Promise((resolve, reject) => {
+      this.socket = io('http://localhost:3001', {
         reconnection: true,
         reconnectionAttempts: this.maxReconnectAttempts,
         reconnectionDelay: 1000,
         timeout: this.connectionTimeout,
-        query: { userId: userData.userId }
+        transports: ['polling', 'websocket'],
+        withCredentials: true,
+        extraHeaders: {
+          Authorization: `Bearer ${token}`
+        }
       }) as CustomSocket;
 
-      // Set up connection handlers
       const connectHandler = () => {
         console.log('Socket connected successfully');
-        
-        // Emit user_connected event with user data
-        this.socket!.emit('user_connected', userData, (response) => {
-          if (response?.status === 'connected') {
-            console.log('User connected to socket server:', response);
-            resolve(this.socket!);
-          } else {
-            const error = new Error(`Connection rejected: ${response?.message || 'Unknown error'}`);
-            console.error(error);
-            reject(error);
-            this.cleanup();
-          }
-        });
+        resolve(this.socket!);
       };
 
-      // Set up error handlers
       const errorHandler = (error: Error) => {
         console.error('Socket connection error:', error);
-        this.reconnectAttempts++;
-        
-        if (this.reconnectAttempts > this.maxReconnectAttempts) {
-          reject(new Error(`Connection failed after ${this.maxReconnectAttempts} attempts`));
-          this.cleanup();
-        }
+        this.handleReconnection(error, reject);
       };
 
-      // Attach event listeners
       this.socket.once('connect', connectHandler);
-      this.socket.on('connect_error', errorHandler);
+      this.socket.once('connect_error', errorHandler);
 
-      // Set connection timeout
       const timeout = setTimeout(() => {
         if (!this.socket?.connected) {
           reject(new Error('Connection timeout'));
@@ -134,51 +76,43 @@ class SocketService {
         }
       }, this.connectionTimeout);
 
-      // Clean up timeout on success
       this.socket.on('connect', () => clearTimeout(timeout));
     });
 
-    // Set up disconnect and reconnection handlers
     this.setupEventHandlers();
     return this.connectionPromise;
   }
 
-  /**
-   * Setup common socket event handlers
-   */
+  private handleReconnection(error: Error, reject: (reason?: any) => void) {
+    this.reconnectAttempts++;
+    if (this.reconnectAttempts > this.maxReconnectAttempts) {
+      reject(new Error(`Connection failed after ${this.maxReconnectAttempts} attempts`));
+      this.cleanup();
+    }
+  }
+
   private setupEventHandlers() {
     if (!this.socket) return;
 
     this.socket.on('disconnect', (reason) => {
-      console.log('Socket disconnected:', reason);
-      
+      console.log('Disconnected:', reason);
       if (reason === 'io server disconnect') {
-        // Server disconnected us intentionally
-        console.log('Server disconnected socket. Reconnecting in 3s...');
         setTimeout(() => this.socket?.connect(), 3000);
       }
     });
 
     this.socket.on('reconnect_attempt', (attempt) => {
-      console.log(`Reconnection attempt ${attempt}/${this.maxReconnectAttempts}`);
-    });
-
-    this.socket.on('reconnect_error', (error) => {
-      console.error('Reconnection error:', error);
+      console.log(`Reconnect attempt ${attempt}/${this.maxReconnectAttempts}`);
     });
 
     this.socket.on('reconnect_failed', () => {
-      console.error('Reconnection failed after all attempts');
-      this.connectionPromise = null;
+      console.error('Reconnection failed');
+      this.cleanup();
     });
   }
 
-  /**
-   * Clean up socket connection and state
-   */
   private cleanup() {
     if (this.socket) {
-      console.log('Cleaning up socket connection');
       this.socket.removeAllListeners();
       this.socket.disconnect();
       this.socket = null;
@@ -187,34 +121,21 @@ class SocketService {
     this.reconnectAttempts = 0;
   }
 
-  /**
-   * Disconnect socket
-   */
   disconnect() {
     this.cleanup();
   }
 
-  /**
-   * Emit event with promise-based acknowledgment
-   */
   emit<T = any, R = any>(event: string, data?: T): Promise<R> {
     return new Promise((resolve, reject) => {
-      if (!this.socket) {
-        reject(new Error('Socket instance not initialized'));
-        return;
-      }
-
-      if (!this.socket.connected) {
+      if (!this.socket?.connected) {
         reject(new Error('Socket not connected'));
         return;
       }
 
-      // Set timeout for acknowledgment
       const timeout = setTimeout(() => {
-        reject(new Error(`Emit timeout for event "${event}"`));
+        reject(new Error(`Emit timeout for ${event}`));
       }, 5000);
 
-      // Emit with acknowledgment
       this.socket.emit(event, data, (response: R) => {
         clearTimeout(timeout);
         resolve(response);
@@ -222,35 +143,19 @@ class SocketService {
     });
   }
 
-  /**
-   * Register event listener
-   */
-  on<T = any>(event: string, callback: (data: T) => void): void {
-    if (this.socket) {
-      this.socket.on(event, callback);
-    } else {
-      console.warn(`Attempted to register listener for "${event}" but socket is not initialized`);
-    }
+  on<T = any>(event: string, callback: (data: T) => void) {
+    this.socket?.on(event, callback);
   }
 
-  /**
-   * Remove event listener
-   */
-  off<T = any>(event: string, callback?: (data: T) => void): void {
+  off<T = any>(event: string, callback?: (data: T) => void) {
     this.socket?.off(event, callback);
   }
 
-  /**
-   * Get socket ID
-   */
-  get id(): string | undefined {
+  get id() {
     return this.socket?.id;
   }
 
-  /**
-   * Check if socket is connected
-   */
-  get connected(): boolean {
+  get connected() {
     return !!this.socket?.connected;
   }
 }
