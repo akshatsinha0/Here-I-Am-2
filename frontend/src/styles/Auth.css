@@ -440,3 +440,36 @@
     max-width: 280px;
   }
 }
+.inline-link {
+  background: none;
+  border: none;
+  color: #3b82f6;
+  text-decoration: underline;
+  cursor: pointer;
+  font-size: inherit;
+  font-family: inherit;
+  padding: 0;
+  margin: 0;
+  transition: color 0.2s ease;
+}
+
+.inline-link:hover {
+  color: #1d4ed8;
+  text-decoration: none;
+}
+
+.inline-link:focus {
+  outline: 2px solid #3b82f6;
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+.error-message .inline-link {
+  color: #ffffff;
+  font-weight: 500;
+}
+
+.error-message .inline-link:hover {
+  color: #f1f5f9;
+  text-decoration: underline;
+}
