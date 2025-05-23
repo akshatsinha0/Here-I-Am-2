@@ -10,21 +10,21 @@ interface AuthModalProps {
   isOpen: boolean;
   onClose: () => void;
   initialView?: 'signin' | 'signup';
+  prefilledEmail?: string;
 }
 
-const AuthModal = ({ isOpen, onClose, initialView = 'signin' }: AuthModalProps) => {
+const AuthModal = ({ isOpen, onClose, initialView = 'signin', prefilledEmail }: AuthModalProps) => {
   const [view, setView] = useState<'signin' | 'signup'>(initialView);
+  const [storedEmail, setStoredEmail] = useState(prefilledEmail || '');
   const [isLoading, setIsLoading] = useState(false);
-  const { login, register } = useAuth();
+  const { login, register, clearError } = useAuth();
 
-  const handleSignIn = async (username: string, password: string) => {
+  const handleSignIn = async (email: string, password: string) => {
     setIsLoading(true);
+    clearError();
     try {
-      await login(username, password);
+      await login(email, password);
       onClose();
-    } catch (error) {
-      console.error('Sign in error:', error);
-      // Handle error (we would add proper error handling in a real app)
     } finally {
       setIsLoading(false);
     }
@@ -32,41 +32,32 @@ const AuthModal = ({ isOpen, onClose, initialView = 'signin' }: AuthModalProps) 
 
   const handleSignUp = async (username: string, email: string, password: string) => {
     setIsLoading(true);
+    clearError();
     try {
       await register(username, email, password);
       onClose();
-    } catch (error) {
-      console.error('Sign up error:', error);
-      // Handle error (we would add proper error handling in a real app)
     } finally {
       setIsLoading(false);
     }
   };
 
-  const toggleView = () => {
-    setView(view === 'signin' ? 'signup' : 'signin');
+  const handleToggleView = (email?: string) => {
+    clearError();
+    setStoredEmail(email || '');
+    setView(prev => prev === 'signin' ? 'signup' : 'signin');
   };
 
   const modalVariants = {
-    hidden: {
-      opacity: 0,
-      scale: 0.9,
-    },
-    visible: {
-      opacity: 1,
+    hidden: { opacity: 0, scale: 0.9 },
+    visible: { 
+      opacity: 1, 
       scale: 1,
-      transition: {
-        type: 'spring',
-        stiffness: 300,
-        damping: 30,
-      }
+      transition: { type: 'spring', stiffness: 300, damping: 30 }
     },
-    exit: {
-      opacity: 0,
+    exit: { 
+      opacity: 0, 
       scale: 0.9,
-      transition: {
-        duration: 0.2,
-      }
+      transition: { duration: 0.2 }
     }
   };
 
@@ -109,18 +100,12 @@ const AuthModal = ({ isOpen, onClose, initialView = 'signin' }: AuthModalProps) 
                 <div className="decorative-circles">
                   <motion.div 
                     className="circle one"
-                    animate={{
-                      scale: [1, 1.1, 1],
-                      opacity: [1, 0.8, 1]
-                    }}
+                    animate={{ scale: [1, 1.1, 1], opacity: [1, 0.8, 1] }}
                     transition={{ repeat: Infinity, duration: 3 }}
                   />
                   <motion.div 
                     className="circle two"
-                    animate={{
-                      scale: [1, 1.2, 1],
-                      opacity: [0.8, 1, 0.8]
-                    }}
+                    animate={{ scale: [1, 1.2, 1], opacity: [0.8, 1, 0.8] }}
                     transition={{ repeat: Infinity, duration: 4, delay: 1 }}
                   />
                 </div>
@@ -132,15 +117,17 @@ const AuthModal = ({ isOpen, onClose, initialView = 'signin' }: AuthModalProps) 
                     <SignInForm 
                       key="signin"
                       onSubmit={handleSignIn} 
-                      onToggleForm={toggleView} 
+                      onToggleForm={(email) => handleToggleView(email)}
                       isLoading={isLoading}
+                      prefilledEmail={storedEmail}
                     />
                   ) : (
                     <SignUpForm 
                       key="signup"
                       onSubmit={handleSignUp} 
-                      onToggleForm={toggleView} 
+                      onToggleForm={(email) => handleToggleView(email)}
                       isLoading={isLoading}
+                      prefilledEmail={storedEmail}
                     />
                   )}
                 </AnimatePresence>

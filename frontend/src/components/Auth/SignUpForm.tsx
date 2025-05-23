@@ -1,32 +1,31 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { FiMail, FiLock, FiUser, FiShield, FiEye, FiEyeOff, FiKey } from 'react-icons/fi';
 import PasswordGenerator from './PasswordGenerator';
 import '../../styles/Auth.css';
+import { useAuth } from '../../contexts/AuthContext';
 
 interface SignUpFormProps {
   onSubmit: (username: string, email: string, password: string) => Promise<void>;
-  onToggleForm: () => void;
+  onToggleForm: (email?: string) => void;
   isLoading: boolean;
+  prefilledEmail?: string;
 }
 
-const SignUpForm = ({ onSubmit, onToggleForm, isLoading }: SignUpFormProps) => {
+const SignUpForm = ({ onSubmit, onToggleForm, isLoading, prefilledEmail }: SignUpFormProps) => {
+  const { checkEmailAvailability, checkUsernameAvailability, authError, clearError } = useAuth();
   const [username, setUsername] = useState('');
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState(prefilledEmail || '');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [agreedToTerms, setAgreedToTerms] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [showPasswordGenerator, setShowPasswordGenerator] = useState(false);
-  
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (username && email && password && password === confirmPassword && agreedToTerms) {
-      await onSubmit(username, email, password);
-    }
-  };
+  const [usernameAvailable, setUsernameAvailable] = useState(true);
+  const [emailAvailable, setEmailAvailable] = useState(true);
 
+  // Helper functions (declared first)
   const isValidEmail = (email: string) => {
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
   };
@@ -35,23 +34,65 @@ const SignUpForm = ({ onSubmit, onToggleForm, isLoading }: SignUpFormProps) => {
     return password.length >= 8;
   };
 
+  // Password match check (declared before isFormValid)
   const passwordsMatch = password && confirmPassword && password === confirmPassword;
 
-  const togglePasswordVisibility = () => {
-    setShowPassword(!showPassword);
+  // Form validation (now passwordsMatch is available)
+  const isFormValid = useCallback(() => {
+    return usernameAvailable && 
+           emailAvailable &&
+           username.length >= 3 &&
+           isValidEmail(email) &&
+           isValidPassword(password) &&
+           passwordsMatch &&
+           agreedToTerms;
+  }, [usernameAvailable, emailAvailable, username, email, password, passwordsMatch, agreedToTerms]);
+
+  // Debounced username availability check
+  useEffect(() => {
+    const checkUsername = async () => {
+      if (username.length >= 3) {
+        const available = await checkUsernameAvailability(username);
+        setUsernameAvailable(available);
+      }
+    };
+    
+    const timeoutId = setTimeout(checkUsername, 500);
+    return () => clearTimeout(timeoutId);
+  }, [username, checkUsernameAvailability]);
+
+  // Debounced email availability check
+  useEffect(() => {
+    const checkEmail = async () => {
+      if (email.includes('@')) {
+        const available = await checkEmailAvailability(email);
+        setEmailAvailable(available);
+      }
+    };
+    
+    const timeoutId = setTimeout(checkEmail, 500);
+    return () => clearTimeout(timeoutId);
+  }, [email, checkEmailAvailability]);
+
+  // Handle prefilled email
+  useEffect(() => {
+    if (prefilledEmail) setEmail(prefilledEmail);
+  }, [prefilledEmail]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    clearError();
+    if (isFormValid()) {
+      await onSubmit(username, email, password);
+    }
   };
 
-  const toggleConfirmPasswordVisibility = () => {
-    setShowConfirmPassword(!showConfirmPassword);
-  };
+  const togglePasswordVisibility = () => setShowPassword(!showPassword);
+  const toggleConfirmPasswordVisibility = () => setShowConfirmPassword(!showConfirmPassword);
 
   const handleGeneratePassword = (generatedPassword: string) => {
     setPassword(generatedPassword);
     setConfirmPassword(generatedPassword);
-  };
-
-  const handleOpenPasswordGenerator = () => {
-    setShowPasswordGenerator(true);
   };
 
   return (
@@ -76,7 +117,20 @@ const SignUpForm = ({ onSubmit, onToggleForm, isLoading }: SignUpFormProps) => {
             value={username}
             onChange={(e) => setUsername(e.target.value)}
             required
+            className={!usernameAvailable ? 'input-error' : ''}
           />
+          {!usernameAvailable && (
+            <p className="error-message">
+              A user already exists with this username, if this is you,{' '}
+              <button 
+                type="button" 
+                className="inline-link"
+                onClick={() => onToggleForm(email)}
+              >
+                Sign In
+              </button>
+            </p>
+          )}
           {username && username.length < 3 && 
             <p className="error-message">Username must be at least 3 characters</p>
           }
@@ -92,8 +146,20 @@ const SignUpForm = ({ onSubmit, onToggleForm, isLoading }: SignUpFormProps) => {
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             required
-            className={email && !isValidEmail(email) ? 'input-error' : ''}
+            className={!emailAvailable ? 'input-error' : ''}
           />
+          {!emailAvailable && (
+            <p className="error-message">
+              A user already exists with this email, if this is you,{' '}
+              <button 
+                type="button" 
+                className="inline-link"
+                onClick={() => onToggleForm(email)}
+              >
+                Sign In
+              </button>
+            </p>
+          )}
           {email && !isValidEmail(email) && 
             <p className="error-message">Please enter a valid email address</p>
           }
@@ -115,7 +181,7 @@ const SignUpForm = ({ onSubmit, onToggleForm, isLoading }: SignUpFormProps) => {
             <button
               type="button"
               className="password-toggle-icon generator-icon" 
-              onClick={handleOpenPasswordGenerator}
+              onClick={() => setShowPasswordGenerator(true)}
               title="Generate secure password"
               aria-label="Open password generator"
             >
@@ -174,20 +240,25 @@ const SignUpForm = ({ onSubmit, onToggleForm, isLoading }: SignUpFormProps) => {
           </label>
         </div>
         
+        {authError?.field === 'email' || authError?.field === 'username' ? (
+          <div className="form-error">
+            {authError.message}{' '}
+            <button 
+              type="button" 
+              className="inline-link"
+              onClick={() => onToggleForm(email)}
+            >
+              Sign In
+            </button>
+          </div>
+        ) : authError?.message ? (
+          <div className="form-error">{authError.message}</div>
+        ) : null}
+        
         <motion.button 
           type="submit"
           className="auth-button"
-          disabled={
-            isLoading || 
-            !username || 
-            username.length < 3 ||
-            !email || 
-            !isValidEmail(email) || 
-            !password || 
-            !isValidPassword(password) || 
-            !passwordsMatch ||
-            !agreedToTerms
-          }
+          disabled={isLoading || !isFormValid()}
           whileHover={{ scale: 1.02 }}
           whileTap={{ scale: 0.98 }}
         >
@@ -207,7 +278,7 @@ const SignUpForm = ({ onSubmit, onToggleForm, isLoading }: SignUpFormProps) => {
         <motion.button 
           type="button"
           className="toggle-form-button"
-          onClick={onToggleForm}
+          onClick={() => onToggleForm()}
           whileHover={{ scale: 1.05 }}
           whileTap={{ scale: 0.95 }}
         >
