@@ -1,8 +1,5 @@
 import { Document, Schema, model, Types } from 'mongoose';
 
-/**
- * User interface with proper TypeScript typing
- */
 export interface IUser extends Document {
   _id: Types.ObjectId;
   username: string;
@@ -67,25 +64,10 @@ const userSchema = new Schema<IUser>({
   }
 });
 
-// Virtual field for frontend ID compatibility
 userSchema.virtual('id').get(function(this: IUser) {
   return this._id.toString();
 });
 
-// Case-insensitive indexes
-// userSchema.index({ username: 1 }, { 
-//   unique: true,
-//   collation: { locale: 'en', strength: 2 },
-//   background: true
-// });
-
-// userSchema.index({ email: 1 }, { 
-//   unique: true,
-//   collation: { locale: 'en', strength: 2 },
-//   background: true
-// });
-
-// Error handling for duplicate keys
 userSchema.post('save', function (error: any, _doc: IUser, next: (err?: Error) => void) {
   if (error.name === 'MongoServerError' && error.code === 11000) {
     const field = Object.keys(error.keyPattern)[0];
@@ -95,15 +77,5 @@ userSchema.post('save', function (error: any, _doc: IUser, next: (err?: Error) =
     next(error);
   }
 });
-
-// Query middleware to exclude password by default
-const excludePassword = function(this: any, next: () => void) {
-  this.select('-password');
-  next();
-};
-
-userSchema.pre('find', excludePassword);
-userSchema.pre('findOne', excludePassword);
-userSchema.pre('findOneAndUpdate', excludePassword);
 
 export default model<IUser>('User', userSchema);
