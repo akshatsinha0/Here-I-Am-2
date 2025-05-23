@@ -137,3 +137,67 @@
   color: white;
   border-color: var(--primary-color);
 }
+
+.self-profile {
+  background-color: rgba(var(--primary-color-rgb), 0.1);
+  border: 1px solid var(--primary-color);
+}
+
+.self-profile .user-info h3::after {
+  content: " (You)";
+  opacity: 0.7;
+}
+
+.self-chat-dialog {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.self-chat-dialog .dialog-content {
+  background: var(--bg-primary);
+  padding: 2rem;
+  border-radius: 12px;
+  max-width: 400px;
+  text-align: center;
+}
+
+.self-chat-dialog h3 {
+  margin: 0 0 1rem;
+}
+
+.self-chat-dialog p {
+  color: var(--text-secondary);
+  margin-bottom: 2rem;
+}
+
+.self-chat-dialog .dialog-actions {
+  display: flex;
+  gap: 1rem;
+  justify-content: center;
+}
+
+.self-chat-dialog button {
+  padding: 0.5rem 1.5rem;
+  border-radius: 8px;
+  border: none;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+
+.self-chat-dialog button:first-child {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+.self-chat-dialog button:last-child {
+  background: var(--primary-color);
+  color: white;
+}

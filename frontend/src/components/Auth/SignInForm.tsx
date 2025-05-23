@@ -1,28 +1,24 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
-import { FiMail, FiLock, FiUser, FiEye, FiEyeOff } from 'react-icons/fi';
+import { FiLock, FiMail, FiEye, FiEyeOff } from 'react-icons/fi';
 import '../../styles/Auth.css';
 
 interface SignInFormProps {
-  onSubmit: (username: string, password: string) => Promise<void>;
+  onSubmit: (email: string, password: string) => Promise<void>;
   onToggleForm: () => void;
   isLoading: boolean;
 }
 
 const SignInForm = ({ onSubmit, onToggleForm, isLoading }: SignInFormProps) => {
-  const [username, setUsername] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (username && password) {
-      await onSubmit(username, password);
+    if (email && password) {
+      await onSubmit(email, password);
     }
-  };
-
-  const togglePasswordVisibility = () => {
-    setShowPassword(!showPassword);
   };
 
   return (
@@ -39,14 +35,15 @@ const SignInForm = ({ onSubmit, onToggleForm, isLoading }: SignInFormProps) => {
       <form onSubmit={handleSubmit}>
         <div className="form-group">
           <div className="input-icon">
-            <FiUser />
+            <FiMail />
           </div>
           <input 
-            type="text" 
-            placeholder="Username or Email" 
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
+            type="email" 
+            placeholder="Email address" 
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
             required
+            autoComplete="email"
           />
         </div>
         
@@ -60,27 +57,22 @@ const SignInForm = ({ onSubmit, onToggleForm, isLoading }: SignInFormProps) => {
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             required
+            autoComplete="current-password"
           />
-          <div 
+          <button 
+            type="button"
             className="password-toggle-icon" 
-            onClick={togglePasswordVisibility}
+            onClick={() => setShowPassword(!showPassword)}
             title={showPassword ? "Hide password" : "Show password"}
           >
             {showPassword ? <FiEyeOff /> : <FiEye />}
-          </div>
-        </div>
-        
-        <div className="form-options">
-          <label className="remember-me">
-            <input type="checkbox" /> Remember me
-          </label>
-          <a href="#" className="forgot-password">Forgot password?</a>
+          </button>
         </div>
         
         <motion.button 
           type="submit"
           className="auth-button"
-          disabled={isLoading || !username || !password}
+          disabled={isLoading || !email || !password}
           whileHover={{ scale: 1.02 }}
           whileTap={{ scale: 0.98 }}
         >

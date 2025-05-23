@@ -6,19 +6,19 @@ import ChatArea from './components/ChatArea/ChatArea';
 import OnlineUsers from './components/OnlineUsers/OnlineUsers';
 import AuthModal from './components/Auth/AuthModal';
 import { ThemeProvider } from './contexts/ThemeContext';
-import { ChatProvider } from './contexts/ChatContext';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { OnlineUsersProvider } from './contexts/OnlineUsersContext';
+import { ConversationsProvider, useConversations } from './contexts/ConversationsContext';
 import './App.css';
 
-// AppContent separates the component logic from provider wrapping
 const AppContent = () => {
-  const [selectedChat, setSelectedChat] = useState<number | null>(null);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   const [showSidebar, setShowSidebar] = useState(true);
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [authView, setAuthView] = useState<'signin' | 'signup'>('signin');
   
   const { isAuthenticated } = useAuth();
+  const { activeConversation } = useConversations();
 
   useEffect(() => {
     const handleResize = () => {
@@ -51,13 +51,7 @@ const AppContent = () => {
             transition={{ type: 'spring', stiffness: 300, damping: 30 }}
           >
             <div className="chat-sidebar">
-              <ChatList 
-                onSelectChat={(id) => {
-                  setSelectedChat(id);
-                  if (isMobile) setShowSidebar(false);
-                }} 
-                selectedChat={selectedChat}
-              />
+              <ChatList />
             </div>
           </motion.div>
         )}
@@ -68,9 +62,8 @@ const AppContent = () => {
         layout
         transition={{ type: 'spring', stiffness: 300, damping: 30 }}
       >
-        {selectedChat ? (
+        {activeConversation ? (
           <ChatArea 
-            chatId={selectedChat} 
             onBack={() => {
               if (isMobile) setShowSidebar(true);
             }}
@@ -124,7 +117,7 @@ const AppContent = () => {
       </motion.div>
 
       <AnimatePresence>
-        {(!isMobile || !selectedChat) && (
+        {(!isMobile || !activeConversation) && (
           <motion.div 
             className="online-users-container"
             initial={{ width: 0, opacity: 0 }}
@@ -132,10 +125,7 @@ const AppContent = () => {
             exit={{ width: 0, opacity: 0 }}
             transition={{ type: 'spring', stiffness: 300, damping: 30 }}
           >
-            <OnlineUsers onSelectUser={(userId) => {
-              console.log(`Starting chat with user ${userId}`);
-              if (isMobile) setShowSidebar(false);
-            }} />
+            <OnlineUsers />
           </motion.div>
         )}
       </AnimatePresence>
@@ -153,9 +143,11 @@ const App = () => {
   return (
     <ThemeProvider>
       <AuthProvider>
-        <ChatProvider>
-          <AppContent />
-        </ChatProvider>
+        <OnlineUsersProvider>
+          <ConversationsProvider>
+            <AppContent />
+          </ConversationsProvider>
+        </OnlineUsersProvider>
       </AuthProvider>
     </ThemeProvider>
   );

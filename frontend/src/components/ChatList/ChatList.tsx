@@ -1,92 +1,33 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { FiSearch, FiEdit, FiMoreVertical, FiPlus } from 'react-icons/fi';
+import { useConversations } from '../../contexts/ConversationsContext';
+import { useOnlineUsers } from '../../contexts/OnlineUsersContext';
+import { useAuth } from '../../contexts/AuthContext';
 import './ChatList.css';
 
-interface Chat {
-  id: number;
-  name: string;
-  lastMessage: string;
-  timestamp: string;
-  unread: number;
-  avatar: string;
-  online: boolean;
-  isGroup: boolean;
-}
-
-interface ChatListProps {
-  onSelectChat: (id: number) => void;
-  selectedChat: number | null;
-}
-
-const ChatList = ({ onSelectChat, selectedChat }: ChatListProps) => {
+const ChatList = () => {
   const [searchTerm, setSearchTerm] = useState('');
-  const [chats, setChats] = useState<Chat[]>([]);
-  const [showActions, setShowActions] = useState<number | null>(null);
+  const [showActions, setShowActions] = useState<string | null>(null);
   const [showNewChatModal, setShowNewChatModal] = useState(false);
+  
+  const { conversations, setActiveConversation, activeConversation } = useConversations();
+  const { isUserOnline } = useOnlineUsers();
+  const { isAuthenticated, currentUser } = useAuth();
 
-  // Simulated data
-  useEffect(() => {
-    // In a real app, this would be fetched from an API
-    const mockChats = [
-      {
-        id: 1,
-        name: 'Sarah Johnson',
-        lastMessage: 'Looking forward to our meeting tomorrow!',
-        timestamp: '10:42 AM',
-        unread: 2,
-        avatar: '',
-        online: true,
-        isGroup: false
-      },
-      {
-        id: 2,
-        name: 'Development Team',
-        lastMessage: 'Alex: I just pushed the latest changes',
-        timestamp: 'Yesterday',
-        unread: 0,
-        avatar: '',
-        online: false,
-        isGroup: true
-      },
-      {
-        id: 3,
-        name: 'Michael Chen',
-        lastMessage: 'Thanks for the update',
-        timestamp: 'Yesterday',
-        unread: 0,
-        avatar: '',
-        online: true,
-        isGroup: false
-      },
-      {
-        id: 4,
-        name: 'Project X Discussion',
-        lastMessage: 'Let\'s finalize the design by Friday',
-        timestamp: 'Monday',
-        unread: 5,
-        avatar: '',
-        online: false,
-        isGroup: true
-      },
-      {
-        id: 5,
-        name: 'Emma Wilson',
-        lastMessage: 'Can we reschedule our call?',
-        timestamp: '05/18',
-        unread: 0,
-        avatar: '',
-        online: false,
-        isGroup: false
-      }
-    ];
-    
-    setChats(mockChats);
-  }, []);
-
-  const filteredChats = chats.filter(
+  const filteredChats = conversations.filter(
     chat => chat.name.toLowerCase().includes(searchTerm.toLowerCase())
   );
+
+  const getLastMessageText = (lastMessage: any) => {
+    if (typeof lastMessage === 'string') return lastMessage;
+    if (lastMessage?.text) return lastMessage.text;
+    return 'Start a conversation';
+  };
+
+  const handleSelectChat = (chatId: string) => {
+    setActiveConversation(chatId);
+  };
 
   return (
     <div className="chat-list">
@@ -114,72 +55,92 @@ const ChatList = ({ onSelectChat, selectedChat }: ChatListProps) => {
       </div>
 
       <div className="chats-container">
+        {!isAuthenticated && (
+          <div className="not-authenticated-message">
+            Please sign in to view your conversations
+          </div>
+        )}
+
+        {isAuthenticated && filteredChats.length === 0 && (
+          <div className="no-chats-message">
+            No conversations yet. Start chatting with someone from the online users list.
+          </div>
+        )}
+
         <AnimatePresence>
-          {filteredChats.map(chat => (
-            <motion.div 
-              key={chat.id}
-              className={`chat-item ${selectedChat === chat.id ? 'selected' : ''}`}
-              onClick={() => onSelectChat(chat.id)}
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, height: 0 }}
-              transition={{ type: 'spring', stiffness: 500, damping: 30 }}
-              whileHover={{ backgroundColor: 'var(--bg-secondary)' }}
-            >
-              <div className="chat-avatar">
-                {chat.avatar ? (
-                  <img src={chat.avatar} alt={chat.name} />
-                ) : (
-                  <div className="avatar-placeholder">
-                    {chat.isGroup ? 
-                      <div className="group-avatar">{chat.name.substring(0, 1)}</div> : 
-                      <div className="user-avatar-text">{chat.name.split(' ').map(n => n[0]).join('')}</div>
-                    }
-                  </div>
-                )}
-                {chat.online && <div className="online-indicator"></div>}
-              </div>
-              <div className="chat-details">
-                <div className="chat-header">
-                  <h3 className="chat-name">{chat.name}</h3>
-                  <span className="chat-time">{chat.timestamp}</span>
-                </div>
-                <div className="chat-message-preview">
-                  <p>{chat.lastMessage}</p>
-                  {chat.unread > 0 && (
-                    <span className="unread-badge">{chat.unread}</span>
-                  )}
-                </div>
-              </div>
-              <motion.button 
-                className="chat-menu-button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setShowActions(showActions === chat.id ? null : chat.id);
-                }}
-                whileHover={{ scale: 1.1 }}
-                whileTap={{ scale: 0.9 }}
+          {isAuthenticated && filteredChats.map(chat => {
+            const otherParticipantId = !chat.isGroup 
+              ? chat.participants.find(id => id !== currentUser?.id) 
+              : null;
+            const isOnline = otherParticipantId ? isUserOnline(otherParticipantId) : false;
+
+            return (
+              <motion.div 
+                key={chat.id}
+                className={`chat-item ${activeConversation === chat.id ? 'selected' : ''}`}
+                onClick={() => handleSelectChat(chat.id)}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, height: 0 }}
+                transition={{ type: 'spring', stiffness: 500, damping: 30 }}
+                whileHover={{ backgroundColor: 'var(--bg-secondary)' }}
               >
-                <FiMoreVertical />
-              </motion.button>
-              
-              <AnimatePresence>
-                {showActions === chat.id && (
-                  <motion.div 
-                    className="chat-actions"
-                    initial={{ opacity: 0, scale: 0.8 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.8 }}
-                    transition={{ type: 'spring', stiffness: 500, damping: 30 }}
-                  >
-                    <button>Mark as read</button>
-                    <button>Pin conversation</button>
-                    <button className="delete-action">Delete</button>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </motion.div>
-          ))}
+                <div className="chat-avatar">
+                  {chat.avatar ? (
+                    <img src={chat.avatar} alt={chat.name} />
+                  ) : (
+                    <div className="avatar-placeholder">
+                      {chat.isGroup ? 
+                        <div className="group-avatar">{chat.name.substring(0, 1)}</div> : 
+                        <div className="user-avatar-text">{chat.name.split(' ').map(n => n[0]).join('')}</div>
+                      }
+                    </div>
+                  )}
+                  {!chat.isGroup && isOnline && <div className="online-indicator"></div>}
+                </div>
+                <div className="chat-details">
+                  <div className="chat-header">
+                    <h3 className="chat-name">{chat.name}</h3>
+                    <span className="chat-time">{chat.lastMessageTime || ''}</span>
+                  </div>
+                  <div className="chat-message-preview">
+                    <p>{getLastMessageText(chat.lastMessage)}</p>
+                    {chat.unreadCount > 0 && (
+                      <span className="unread-badge">{chat.unreadCount}</span>
+                    )}
+                  </div>
+                </div>
+                <motion.button 
+                  className="chat-menu-button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setShowActions(showActions === chat.id ? null : chat.id);
+                  }}
+                  whileHover={{ scale: 1.1 }}
+                  whileTap={{ scale: 0.9 }}
+                >
+                  <FiMoreVertical />
+                </motion.button>
+                
+                <AnimatePresence>
+                  {showActions === chat.id && (
+                    <motion.div 
+                      className="chat-actions"
+                      initial={{ opacity: 0, scale: 0.8 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.8 }}
+                      transition={{ type: 'spring', stiffness: 500, damping: 30 }}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <button>Mark as read</button>
+                      <button>Pin conversation</button>
+                      <button className="delete-action">Delete</button>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </motion.div>
+            );
+          })}
         </AnimatePresence>
       </div>
 

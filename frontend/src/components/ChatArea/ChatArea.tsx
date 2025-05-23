@@ -1,127 +1,76 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { FiArrowLeft, FiMoreVertical, FiPaperclip, FiSmile, FiSend, FiMic, FiChevronDown } from 'react-icons/fi';
+import { FiArrowLeft, FiMoreVertical, FiPaperclip, FiSmile, FiSend, FiMic, FiChevronDown, FiX } from 'react-icons/fi';
+import { useConversations } from '../../contexts/ConversationsContext';
+import { useOnlineUsers } from '../../contexts/OnlineUsersContext';
+import { useAuth } from '../../contexts/AuthContext';
 import Message from '../Message/Message';
 import './ChatArea.css';
 
-interface ChatAreaProps {
-  chatId: number;
-  onBack: () => void;
-}
-
 interface MessageType {
-  id: number;
+  id: string;
   text: string;
-  sender: 'user' | 'other';
+  senderId: string;
   timestamp: string;
   status: 'sent' | 'delivered' | 'read';
   replyTo?: {
-    id: number;
+    id: string;
     text: string;
-    sender: string;
+    senderId: string;
   };
 }
 
-const ChatArea = ({ chatId, onBack }: ChatAreaProps) => {
-  const [messages, setMessages] = useState<MessageType[]>([]);
+const ChatArea = ({ onBack }: { onBack: () => void }) => {
+  const { currentUser } = useAuth();
+  const { 
+    activeConversation, 
+    messages, 
+    sendMessage, 
+    conversations, 
+    loadMessages,
+    setActiveConversation
+  } = useConversations();
+  const { isUserOnline } = useOnlineUsers();
+  
   const [newMessage, setNewMessage] = useState('');
-  const [isTyping, setIsTyping] = useState(false);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [showEmoji, setShowEmoji] = useState(false);
   const [showAttachMenu, setShowAttachMenu] = useState(false);
   const [replyingTo, setReplyingTo] = useState<MessageType | null>(null);
+  const [connectionError, setConnectionError] = useState(false);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
 
-  // Simulated data
-  useEffect(() => {
-    // In a real app, this would be fetched from an API based on chatId
-    const mockMessages = [
-      {
-        id: 1,
-        text: 'Hi there! How are you doing today?',
-        sender: 'other' as const,
-        timestamp: '10:30 AM',
-        status: 'read' as const
-      },
-      {
-        id: 2,
-        text: "I'm doing well, thanks for asking! Just finishing up some work for the day.",
-        sender: 'user' as const,
-        timestamp: '10:32 AM',
-        status: 'read' as const
-      },
-      {
-        id: 3,
-        text: 'Great! Have you had a chance to look at the proposal I sent over yesterday?',
-        sender: 'other' as const,
-        timestamp: '10:33 AM',
-        status: 'read' as const
-      },
-      {
-        id: 4,
-        text: 'Yes, I reviewed it this morning. It looks good overall, but I have a few questions about the timeline.',
-        sender: 'user' as const,
-        timestamp: '10:35 AM',
-        status: 'read' as const
-      },
-      {
-        id: 5,
-        text: 'Sure, what questions do you have?',
-        sender: 'other' as const,
-        timestamp: '10:36 AM',
-        status: 'read' as const
-      },
-      {
-        id: 6,
-        text: 'I was wondering if we could extend the deadline for Phase 2 by an additional week? Our team might need more time for testing.',
-        sender: 'user' as const,
-        timestamp: '10:38 AM',
-        status: 'read' as const,
-        replyTo: {
-          id: 5,
-          text: 'Sure, what questions do you have?',
-          sender: 'Sarah Johnson'
-        }
-      },
-      {
-        id: 7,
-        text: "That shouldn't be a problem. I'll update the timeline and send you a revised version later today.",
-        sender: 'other' as const,
-        timestamp: '10:40 AM',
-        status: 'read' as const
-      },
-      {
-        id: 8,
-        text: 'Perfect, thank you! Looking forward to getting started on this project.',
-        sender: 'user' as const,
-        timestamp: '10:41 AM',
-        status: 'delivered' as const
-      }
-    ];
-    
-    setMessages(mockMessages);
-    
-    // Simulate typing indication after a delay
-    const typingTimeout = setTimeout(() => {
-      setIsTyping(true);
-      
-      // Clear typing after a few seconds
-      setTimeout(() => {
-        setIsTyping(false);
-      }, 3000);
-    }, 5000);
-    
-    return () => clearTimeout(typingTimeout);
-  }, [chatId]);
+  const activeChat = activeConversation 
+    ? conversations.find(c => c.id === activeConversation)
+    : null;
 
-  // Scroll to bottom when messages change
+
+  const activeMessages = useMemo(
+    () => (activeConversation ? messages[activeConversation] || [] : []),
+    [activeConversation, messages]
+  );
+
+  // Load messages when active conversation changes
+  useEffect(() => {
+    if (activeConversation) {
+      try {
+        loadMessages(activeConversation);
+      } catch (error) {
+        console.error('Error loading messages:', error);
+        setConnectionError(true);
+        setTimeout(() => setConnectionError(false), 3000);
+      }
+    }
+  }, [activeConversation, loadMessages]);
+
+  // Handle scroll behavior
   useEffect(() => {
     scrollToBottom();
-  }, [messages]);
+  }, [activeMessages]);
 
-  // Handle scroll to check if we need to show "scroll to bottom" button
+  // Scroll listener for "scroll to bottom" button
   useEffect(() => {
     const container = messagesContainerRef.current;
     if (!container) return;
@@ -140,36 +89,50 @@ const ChatArea = ({ chatId, onBack }: ChatAreaProps) => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
-  const handleSendMessage = () => {
-    if (newMessage.trim() === '') return;
-    
-    const newMsg: MessageType = {
-      id: Date.now(),
-      text: newMessage,
-      sender: 'user',
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      status: 'sent',
-      replyTo: replyingTo ? {
-        id: replyingTo.id,
-        text: replyingTo.text,
-        sender: replyingTo.sender === 'user' ? 'You' : 'Sarah Johnson'
-      } : undefined
-    };
-    
-    setMessages([...messages, newMsg]);
-    setNewMessage('');
-    setReplyingTo(null);
+  const handleSendMessage = async () => {
+    if (!activeConversation || !newMessage.trim()) return;
+    try {
+      // If your sendMessage only accepts text, pass only the message string
+      await sendMessage(activeConversation, newMessage);
+      setNewMessage('');
+      setReplyingTo(null);
+    } catch (error) {
+      console.error('Message send error:', error);
+      setConnectionError(true);
+      setTimeout(() => setConnectionError(false), 3000);
+      
+      // Attempt to reconnect if temporary conversation
+      if (activeConversation.startsWith('temp-')) {
+        const originalConv = activeConversation;
+        setActiveConversation(null);
+        setTimeout(() => setActiveConversation(originalConv), 100);
+      }
+    }
   };
 
   const getChatName = () => {
-    // In a real app, you would fetch this based on chatId
-    return 'Sarah Johnson';
+    if (!activeChat) return '';
+    return activeChat.isGroup ? activeChat.name : activeChat.name;
   };
 
   const getOnlineStatus = () => {
-    // In a real app, you would fetch this based on chatId
-    return true;
+    if (!activeChat || activeChat.isGroup) return false;
+    const otherParticipant = activeChat.participants.find(id => id !== currentUser?.id);
+    return otherParticipant ? isUserOnline(otherParticipant) : false;
   };
+
+  if (!activeConversation || !activeChat) {
+    return (
+      <div className="empty-chat-area">
+        <div className="no-chat-selected">
+          <h2>Select a conversation or start a new one</h2>
+          <p>Choose from your existing conversations or find someone online to chat with</p>
+        </div>
+      </div>
+    );
+  }
+
+  const isSelfChat = activeChat.isSelfChat;
 
   return (
     <div className="chat-area">
@@ -186,7 +149,9 @@ const ChatArea = ({ chatId, onBack }: ChatAreaProps) => {
           <div className="chat-info">
             <h2>{getChatName()}</h2>
             <p className="chat-status">
-              {getOnlineStatus() ? 'Online' : 'Offline'}
+              {isSelfChat ? 'Notes to self' : 
+                (activeChat.isGroup ? `${activeChat.participants.length} participants` : 
+                  (getOnlineStatus() ? 'Online' : 'Offline'))}
             </p>
           </div>
         </div>
@@ -201,26 +166,37 @@ const ChatArea = ({ chatId, onBack }: ChatAreaProps) => {
         </div>
       </div>
 
+      {connectionError && (
+        <div className="connection-error-banner">
+          Connection lost - attempting to reconnect...
+        </div>
+      )}
+
       <div className="messages-container" ref={messagesContainerRef}>
         <div className="messages-wrapper">
-          {messages.map((message, index) => (
-            <Message 
-              key={message.id}
-              message={message}
-              showAvatar={index === 0 || messages[index - 1].sender !== message.sender}
-              onReply={() => setReplyingTo(message)}
-            />
-          ))}
-          {isTyping && (
-            <div className="typing-indicator">
-              <div className="typing-dots">
-                <span></span>
-                <span></span>
-                <span></span>
+          {isSelfChat && activeMessages.length === 0 && (
+            <div className="self-chat-welcome">
+              <div className="welcome-message">
+                <h3>Welcome to your personal space</h3>
+                <p>Use this chat to send yourself reminders, notes, links, or any information you want to keep handy.</p>
               </div>
-              <p>Sarah is typing...</p>
             </div>
           )}
+          
+          {activeMessages.map((message, index) => {
+            const isOwnMessage = currentUser?.id === message.senderId;
+            const showAvatar = index === 0 || activeMessages[index - 1].senderId !== message.senderId;
+            
+            return (
+              <Message 
+                key={message.id}
+                message={message}
+                isOwnMessage={isOwnMessage}
+                showAvatar={showAvatar}
+                onReply={() => setReplyingTo(message)}
+              />
+            );
+          })}
           <div ref={messagesEndRef} />
         </div>
         
@@ -253,7 +229,7 @@ const ChatArea = ({ chatId, onBack }: ChatAreaProps) => {
               <div className="reply-bar"></div>
               <div className="reply-text">
                 <span className="reply-sender">
-                  {replyingTo.sender === 'user' ? 'You' : getChatName()}
+                  {replyingTo.senderId === currentUser?.id ? 'You' : getChatName()}
                 </span>
                 <p>{replyingTo.text}</p>
               </div>
@@ -291,11 +267,12 @@ const ChatArea = ({ chatId, onBack }: ChatAreaProps) => {
         <div className="message-input-container">
           <input 
             type="text" 
-            placeholder="Type a message..." 
+            placeholder={isSelfChat ? "Write a note to yourself..." : "Type a message..."} 
             value={newMessage}
             onChange={(e) => setNewMessage(e.target.value)}
             onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
             className="message-input"
+            disabled={connectionError}
           />
         </div>
 
@@ -305,6 +282,7 @@ const ChatArea = ({ chatId, onBack }: ChatAreaProps) => {
               className="input-action-button"
               whileHover={{ scale: 1.1 }}
               whileTap={{ scale: 0.9 }}
+              disabled={connectionError}
             >
               <FiMic />
             </motion.button>
@@ -314,6 +292,7 @@ const ChatArea = ({ chatId, onBack }: ChatAreaProps) => {
               onClick={handleSendMessage}
               whileHover={{ scale: 1.1 }}
               whileTap={{ scale: 0.9 }}
+              disabled={connectionError}
             >
               <FiSend />
             </motion.button>
@@ -368,7 +347,6 @@ const ChatArea = ({ chatId, onBack }: ChatAreaProps) => {
               <button className="emoji-category">❤️</button>
             </div>
             <div className="emoji-grid">
-              {/* This would be populated with actual emojis in a real implementation */}
               <button className="emoji-item" onClick={() => setNewMessage(newMessage + '😀')}>😀</button>
               <button className="emoji-item" onClick={() => setNewMessage(newMessage + '😃')}>😃</button>
               <button className="emoji-item" onClick={() => setNewMessage(newMessage + '😄')}>😄</button>
@@ -392,13 +370,5 @@ const ChatArea = ({ chatId, onBack }: ChatAreaProps) => {
     </div>
   );
 };
-
-// FiX component for close reply
-const FiX = () => (
-  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <line x1="18" y1="6" x2="6" y2="18"></line>
-    <line x1="6" y1="6" x2="18" y2="18"></line>
-  </svg>
-);
 
 export default ChatArea;

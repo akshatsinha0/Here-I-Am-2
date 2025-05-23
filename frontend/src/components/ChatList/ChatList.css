@@ -326,3 +326,19 @@
 .close-modal:hover {
   background-color: var(--bg-secondary);
 }
+
+.not-authenticated-message,
+.no-chats-message {
+  padding: 24px 16px;
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.not-authenticated-message {
+  background-color: rgba(var(--primary-color-rgb), 0.05);
+  border-radius: 8px;
+  margin: 16px;
+  padding: 16px;
+}
