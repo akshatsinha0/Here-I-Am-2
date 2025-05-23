@@ -207,7 +207,7 @@ const loginHandler = asyncHandler(async (req: Request, res: Response) => {
 });
 
 // Logout route (optional - mainly for clearing server-side sessions if needed)
-const logoutHandler = asyncHandler(async (_ req: Request, res: Response) => {
+const logoutHandler = asyncHandler(async (_req: Request, res: Response) => {
   // For JWT-based auth, logout is mainly handled client-side by removing the token
   res.json({ 
     success: true,
