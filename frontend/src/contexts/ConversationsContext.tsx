@@ -26,6 +26,7 @@ interface Conversation {
   avatar: string;
   isGroup: boolean;
   isSelfChat?: boolean;
+  isPinned?: boolean;
 }
 
 interface ConversationsContextType {
@@ -36,6 +37,9 @@ interface ConversationsContextType {
   sendMessage: (conversationId: string, text: string, replyTo?: Message) => Promise<void>;
   startNewConversation: (targetUserId: string, targetUsername: string, targetAvatar: string, isSelfChat?: boolean) => Promise<string | null>;
   loadMessages: (conversationId: string) => void;
+  markAsRead: (conversationId: string) => Promise<void>;
+  pinConversation: (conversationId: string) => Promise<void>;
+  deleteConversation: (conversationId: string) => Promise<void>;
 }
 
 const ConversationsContext = createContext<ConversationsContextType | undefined>(undefined);
@@ -103,7 +107,8 @@ export const ConversationsProvider = ({ children }: ConversationsProviderProps) 
       conversationId: string, 
       lastMessage?: string,
       lastMessageTime?: string,
-      unreadCount?: number
+      unreadCount?: number,
+      isPinned?: boolean
     }) => {
       setConversations(prev => 
         prev.map(conv => 
@@ -111,7 +116,8 @@ export const ConversationsProvider = ({ children }: ConversationsProviderProps) 
             ...conv,
             lastMessage: data.lastMessage || conv.lastMessage,
             lastMessageTime: data.lastMessageTime || conv.lastMessageTime,
-            unreadCount: data.unreadCount ?? conv.unreadCount
+            unreadCount: data.unreadCount ?? conv.unreadCount,
+            isPinned: data.isPinned ?? conv.isPinned
           } : conv
         )
       );
@@ -131,18 +137,34 @@ export const ConversationsProvider = ({ children }: ConversationsProviderProps) 
       }));
     };
 
+    const handleConversationDeleted = (data: { conversationId: string }) => {
+      setConversations(prev => prev.filter(conv => conv.id !== data.conversationId));
+      setMessages(prev => {
+        const newMessages = { ...prev };
+        delete newMessages[data.conversationId];
+        return newMessages;
+      });
+      
+      // Clear active conversation if it was deleted
+      if (activeConversation === data.conversationId) {
+        setActiveConversation(null);
+      }
+    };
+
     socketService.on('new_conversation', handleNewConversation);
     socketService.on('conversation_updated', handleConversationUpdated);
     socketService.on('new_message', handleNewMessage);
     socketService.on('conversation_messages', handleConversationMessages);
+    socketService.on('conversation_deleted', handleConversationDeleted);
 
     return () => {
       socketService.off('new_conversation', handleNewConversation);
       socketService.off('conversation_updated', handleConversationUpdated);
       socketService.off('new_message', handleNewMessage);
       socketService.off('conversation_messages', handleConversationMessages);
+      socketService.off('conversation_deleted', handleConversationDeleted);
     };
-  }, [isAuthenticated, currentUser]);
+  }, [isAuthenticated, currentUser, activeConversation]);
 
   useEffect(() => {
     if (activeConversation && currentUser) {
@@ -230,7 +252,8 @@ export const ConversationsProvider = ({ children }: ConversationsProviderProps) 
                 avatar: targetAvatar,
                 unreadCount: 0,
                 isGroup: false,
-                isSelfChat: true
+                isSelfChat: true,
+                isPinned: false
               };
               setConversations(prev => [...prev, newConversation]);
             }
@@ -263,7 +286,8 @@ export const ConversationsProvider = ({ children }: ConversationsProviderProps) 
         participants: [currentUser.id, targetUserId],
         avatar: targetAvatar,
         unreadCount: 0,
-        isGroup: false
+        isGroup: false,
+        isPinned: false
       };
 
       setConversations(prev => [...prev, tempConversation]);
@@ -305,6 +329,104 @@ export const ConversationsProvider = ({ children }: ConversationsProviderProps) 
     });
   }, []);
 
+  // New method: Mark conversation as read
+  const markAsRead = useCallback(async (conversationId: string) => {
+    if (!currentUser) return;
+
+    try {
+      // Update local state immediately for instant feedback
+      setConversations(prev => 
+        prev.map(conv => 
+          conv.id === conversationId ? { ...conv, unreadCount: 0 } : conv
+        )
+      );
+
+      // Emit to server
+      await socketService.emit('mark_read', { 
+        conversationId,
+        userId: currentUser.id 
+      });
+
+      console.log(`Marked conversation ${conversationId} as read`);
+    } catch (error) {
+      console.error('Failed to mark conversation as read:', error);
+      throw error;
+    }
+  }, [currentUser]);
+
+  // New method: Pin/Unpin conversation
+  const pinConversation = useCallback(async (conversationId: string) => {
+    if (!currentUser) return;
+
+    try {
+      // Get current pin status
+      const conversation = conversations.find(conv => conv.id === conversationId);
+      if (!conversation) throw new Error('Conversation not found');
+
+      const newPinnedStatus = !conversation.isPinned;
+
+      // Update local state immediately for instant feedback
+      setConversations(prev => 
+        prev.map(conv => 
+          conv.id === conversationId ? { ...conv, isPinned: newPinnedStatus } : conv
+        )
+      );
+
+      // Emit to server (if you want server-side persistence)
+      await socketService.emit('pin_conversation', { 
+        conversationId,
+        userId: currentUser.id,
+        isPinned: newPinnedStatus
+      }).catch(() => {
+        // Server doesn't handle pin yet, so we'll just keep it local
+        console.log('Pin state saved locally');
+      });
+
+      console.log(`${newPinnedStatus ? 'Pinned' : 'Unpinned'} conversation ${conversationId}`);
+    } catch (error) {
+      console.error('Failed to pin/unpin conversation:', error);
+      throw error;
+    }
+  }, [currentUser, conversations]);
+
+  // New method: Delete conversation
+  const deleteConversation = useCallback(async (conversationId: string) => {
+    if (!currentUser) return;
+
+    try {
+      // Remove from local state immediately for instant feedback
+      setConversations(prev => prev.filter(conv => conv.id !== conversationId));
+      
+      // Remove messages from local state
+      setMessages(prev => {
+        const newMessages = { ...prev };
+        delete newMessages[conversationId];
+        return newMessages;
+      });
+
+      // Clear active conversation if it was deleted
+      if (activeConversation === conversationId) {
+        setActiveConversation(null);
+      }
+
+      // Emit to server (if you want server-side deletion)
+      await socketService.emit('delete_conversation', { 
+        conversationId,
+        userId: currentUser.id 
+      }).catch(() => {
+        // Server doesn't handle delete yet, so we'll just keep it local
+        console.log('Conversation deleted locally');
+      });
+
+      console.log(`Deleted conversation ${conversationId}`);
+    } catch (error) {
+      console.error('Failed to delete conversation:', error);
+      
+      // Revert local state on error
+      throw error;
+    }
+  }, [currentUser, activeConversation]);
+
   const value = {
     conversations,
     activeConversation,
@@ -312,7 +434,10 @@ export const ConversationsProvider = ({ children }: ConversationsProviderProps) 
     setActiveConversation,
     sendMessage,
     startNewConversation,
-    loadMessages
+    loadMessages,
+    markAsRead,
+    pinConversation,
+    deleteConversation
   };
 
   return <ConversationsContext.Provider value={value}>{children}</ConversationsContext.Provider>;

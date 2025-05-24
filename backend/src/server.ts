@@ -251,6 +251,12 @@ io.on('connection', (socket: Socket) => {
         // Join the existing conversation room
         socket.join(existingConversationId);
         
+        // Get the existing conversation data
+        const existingConversation = conversations.get(existingConversationId);
+        
+        // Emit the existing conversation to the client
+        socket.emit('new_conversation', existingConversation);
+        
         if (callback && typeof callback === 'function') {
           callback({ 
             success: true,
@@ -300,9 +306,17 @@ io.on('connection', (socket: Socket) => {
       if (!isSelfChat) {
         const targetSocket = activeUsers.get(data.targetUserId)?.socketId;
         if (targetSocket) {
-          io.sockets.sockets.get(targetSocket)?.join(finalConversationId);
+          const targetSocketInstance = io.sockets.sockets.get(targetSocket);
+          if (targetSocketInstance) {
+            targetSocketInstance.join(finalConversationId);
+            // Emit new conversation to both participants
+            targetSocketInstance.emit('new_conversation', newConversation);
+          }
         }
       }
+
+      // Emit new conversation to the creator
+      socket.emit('new_conversation', newConversation);
 
       console.log(`Created new conversation: ${finalConversationId}`);
 
@@ -339,6 +353,8 @@ io.on('connection', (socket: Socket) => {
 
       if (!conversation) {
         console.error(`Conversation not found: ${data.conversationId} -> ${actualConversationId}`);
+        console.log('Available conversations:', Array.from(conversations.keys()));
+        console.log('Temp ID mappings:', Array.from(tempIdMap.entries()));
         throw new Error('Conversation not found');
       }
 
