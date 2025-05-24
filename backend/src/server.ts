@@ -117,6 +117,13 @@ const conversations = new Map<string, Conversation>();
 const messages = new Map<string, any[]>();
 const tempIdMap = new Map<string, string>();
 
+// Helper function to broadcast online users
+const broadcastOnlineUsers = () => {
+  const usersList = Array.from(activeUsers.values());
+  console.log(`Broadcasting ${usersList.length} online users`);
+  io.emit('online_users', usersList);
+};
+
 // Socket.IO connection handler
 io.on('connection', (socket: Socket) => {
   const user = socket.data.user;
@@ -137,12 +144,32 @@ io.on('connection', (socket: Socket) => {
   // Join user to their personal room
   socket.join(user._id);
 
+  // Broadcast updated online users list to all clients
+  broadcastOnlineUsers();
+
+  // Handle explicit request for online users
+  socket.on('get_online_users', (callback) => {
+    try {
+      const usersList = Array.from(activeUsers.values());
+      console.log(`Sending ${usersList.length} online users to ${user.username}`);
+      if (callback && typeof callback === 'function') {
+        callback({ success: true, users: usersList });
+      }
+    } catch (error) {
+      console.error('Error sending online users:', error);
+      if (callback && typeof callback === 'function') {
+        callback({ success: false, error: 'Failed to fetch online users' });
+      }
+    }
+  });
+
   // Session reconnection handler
   socket.on('session_reconnect', () => {
     const currentUser = activeUsers.get(user._id);
     if (currentUser) {
       currentUser.socketId = socket.id;
       console.log(`User reconnected: ${user.username}`);
+      broadcastOnlineUsers();
     }
   });
 
@@ -269,7 +296,7 @@ io.on('connection', (socket: Socket) => {
   socket.on('disconnect', (reason: string) => {
     console.log(`Disconnect (${socket.id}): ${reason}`);
     activeUsers.delete(user._id);
-    io.emit('online_users', Array.from(activeUsers.values()));
+    broadcastOnlineUsers();
   });
 });
 

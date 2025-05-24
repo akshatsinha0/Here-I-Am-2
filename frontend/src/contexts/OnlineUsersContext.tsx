@@ -45,7 +45,7 @@ export const OnlineUsersProvider = ({ children }: OnlineUsersProviderProps) => {
   const { isAuthenticated, currentUser, socketConnected } = useAuth();
   const retryTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Clear any existing retry timers when component unmounts
+  // Clear retry timers on unmount
   useEffect(() => {
     return () => {
       if (retryTimeoutRef.current) {
@@ -59,12 +59,21 @@ export const OnlineUsersProvider = ({ children }: OnlineUsersProviderProps) => {
     if (!isAuthenticated || !currentUser?.id) {
       setAllOnlineUsers([]);
       setFilteredUsers([]);
+      setError(null);
+      return;
+    }
+
+    if (!socketConnected) {
+      setError("Socket disconnected");
       return;
     }
 
     const handleOnlineUsers = (users: OnlineUser[]) => {
+      console.log("Received online users:", users);
+      
       if (!Array.isArray(users)) {
-        console.error("Received invalid online users data:", users);
+        console.error("Invalid online users data:", users);
+        setError("Invalid user data received");
         return;
       }
 
@@ -74,18 +83,17 @@ export const OnlineUsersProvider = ({ children }: OnlineUsersProviderProps) => {
       // Store all users
       setAllOnlineUsers(users);
       
-      // Filter out current user from the display list
+      // Filter out current user from display
       const filtered = users.filter(user => 
         user.userId && currentUser.id && user.userId !== currentUser.id
       );
       setFilteredUsers(filtered);
     };
 
-    // Register handler
+    // Listen for server broadcasts
     socketService.on('online_users', handleOnlineUsers);
     
-    // Initial request for users
-    refreshOnlineUsers();
+    console.log("Online users listener registered");
 
     // Cleanup
     return () => {
@@ -93,50 +101,16 @@ export const OnlineUsersProvider = ({ children }: OnlineUsersProviderProps) => {
     };
   }, [isAuthenticated, currentUser?.id, socketConnected]);
 
-  // Function to refresh online users
+  // Manual refresh function (for future use)
   const refreshOnlineUsers = useCallback(async () => {
-    // Reset any previous retry attempts
-    if (retryTimeoutRef.current) {
-      clearTimeout(retryTimeoutRef.current);
-      retryTimeoutRef.current = null;
-    }
-
-    // Skip if not properly authenticated
-    if (!isAuthenticated || !currentUser?.id) {
-      return Promise.resolve();
-    }
-    
-    // Skip if socket not connected
-    if (!socketService.connected) {
-      setError("Cannot fetch online users - socket disconnected");
-      
-      // Retry after delay
-      retryTimeoutRef.current = setTimeout(() => {
-        refreshOnlineUsers();
-      }, 5000);
-      
+    if (!isAuthenticated || !currentUser?.id || !socketConnected) {
       return Promise.resolve();
     }
 
-    setIsLoading(true);
-    setError(null);
-    
-    try {
-      await socketService.emit('get_online_users');
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to fetch online users';
-      console.error(errorMessage);
-      setError(errorMessage);
-      setIsLoading(false);
-      
-      // Retry after delay
-      retryTimeoutRef.current = setTimeout(() => {
-        refreshOnlineUsers();
-      }, 5000);
-    }
-    
+    // Server should auto-broadcast, so this is just a placeholder
+    console.log("Online users refresh requested");
     return Promise.resolve();
-  }, [isAuthenticated, currentUser?.id, socketService.connected]);
+  }, [isAuthenticated, currentUser?.id, socketConnected]);
 
   const isUserOnline = useCallback((userId: string): boolean => {
     if (!userId) return false;
@@ -145,7 +119,6 @@ export const OnlineUsersProvider = ({ children }: OnlineUsersProviderProps) => {
     );
   }, [allOnlineUsers]);
 
-  // Search function with null safety
   const searchUsers = useCallback((query: string): OnlineUser[] => {
     if (!query) return filteredUsers;
     
