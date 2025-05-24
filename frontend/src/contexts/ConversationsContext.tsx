@@ -5,7 +5,7 @@ import { useAuth } from './AuthContext';
 
 interface Message {
   id: string;
-  text: string; // Enforce text as string
+  text: string;
   senderId: string;
   timestamp: string;
   status: 'sent' | 'delivered' | 'read';
@@ -59,39 +59,43 @@ export const ConversationsProvider = ({ children }: ConversationsProviderProps) 
   const [pendingConversations, setPendingConversations] = useState<Record<string, string>>({});
   const { currentUser, isAuthenticated } = useAuth();
 
+  // Helper function to find existing conversation
+  const findExistingConversation = useCallback((targetUserId: string, isSelfChat: boolean = false): Conversation | null => {
+    if (!currentUser) return null;
+    
+    return conversations.find(conv => {
+      if (isSelfChat) {
+        return conv.isSelfChat && conv.participants.includes(currentUser.id);
+      }
+      return !conv.isSelfChat && !conv.isGroup && 
+             conv.participants.includes(currentUser.id) && 
+             conv.participants.includes(targetUserId);
+    }) || null;
+  }, [conversations, currentUser]);
+
   const handleServerAck = useCallback((tempId: string, serverId: string) => {
     setConversations(prev => 
       prev.map(conv => 
         conv.id === tempId ? { ...conv, id: serverId } : conv
       )
     );
-    setMessages(prev => {
-      const newMessages = { ...prev };
-      newMessages[serverId] = newMessages[tempId] || [];
-      delete newMessages[tempId];
-      return newMessages;
-    });
-    setPendingConversations(prev => {
-      const newPending = { ...prev };
-      delete newPending["self"];
-      return newPending;
-    });
+    setMessages(prev => ({
+      ...prev,
+      [serverId]: prev[tempId] || [],
+    }));
+    setPendingConversations(prev => ({
+      ...prev,
+      [tempId]: serverId
+    }));
   }, []);
 
   useEffect(() => {
     if (!isAuthenticated || !currentUser) return;
 
     const handleNewConversation = (conversation: Conversation) => {
-      if (conversation.isSelfChat) {
-        const pendingTempId = pendingConversations["self"];
-        if (pendingTempId) {
-          handleServerAck(pendingTempId, conversation.id);
-        }
-      }
-
       setConversations(prev => {
-        if (prev.some(c => c.id === conversation.id)) return prev;
-        return [...prev, conversation];
+        const exists = prev.some(c => c.id === conversation.id);
+        return exists ? prev : [...prev, conversation];
       });
     };
 
@@ -138,7 +142,7 @@ export const ConversationsProvider = ({ children }: ConversationsProviderProps) 
       socketService.off('new_message', handleNewMessage);
       socketService.off('conversation_messages', handleConversationMessages);
     };
-  }, [isAuthenticated, currentUser, handleServerAck, pendingConversations]);
+  }, [isAuthenticated, currentUser]);
 
   useEffect(() => {
     if (activeConversation && currentUser) {
@@ -152,15 +156,15 @@ export const ConversationsProvider = ({ children }: ConversationsProviderProps) 
         socketService.emit('mark_read', { 
           conversationId: activeConversation,
           userId: currentUser.id 
+        }).catch(error => {
+          console.error('Mark read error:', error);
         });
       };
 
       if (!messages[activeConversation]?.length) {
         loadMessages(activeConversation);
-        markRead();
-      } else {
-        markRead();
       }
+      markRead();
     }
   }, [activeConversation, currentUser, messages]);
 
@@ -168,9 +172,9 @@ export const ConversationsProvider = ({ children }: ConversationsProviderProps) 
     if (!currentUser) return;
 
     const messageData = {
-      text: text, // Ensure text is always a string
+      text,
       senderId: currentUser.id,
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      timestamp: new Date().toISOString(),
       status: 'sent' as const,
       replyTo: replyTo ? {
         id: replyTo.id,
@@ -178,33 +182,6 @@ export const ConversationsProvider = ({ children }: ConversationsProviderProps) 
         senderId: replyTo.senderId
       } : undefined
     };
-
-    const conversation = conversations.find(c => c.id === conversationId);
-    if (conversation?.isSelfChat && conversationId.startsWith('temp-')) {
-      const newMessage = {
-        ...messageData,
-        id: Date.now().toString()
-      };
-
-      setMessages(prev => ({
-        ...prev,
-        [conversationId]: [...(prev[conversationId] || []), newMessage]
-      }));
-
-      setConversations(prev =>
-        prev.map(conv => {
-          if (conv.id === conversationId) {
-            return {
-              ...conv,
-              lastMessage: text,
-              lastMessageTime: newMessage.timestamp
-            };
-          }
-          return conv;
-        })
-      );
-      return;
-    }
 
     try {
       await socketService.emit('send_message', {
@@ -216,7 +193,7 @@ export const ConversationsProvider = ({ children }: ConversationsProviderProps) 
       console.error('Message send error:', error);
       throw error;
     }
-  }, [conversations, currentUser]);
+  }, [currentUser]);
 
   const startNewConversation = useCallback(async (
     targetUserId: string,
@@ -226,67 +203,106 @@ export const ConversationsProvider = ({ children }: ConversationsProviderProps) 
   ) => {
     if (!currentUser) return null;
 
+    // Check for existing conversation first
+    const existingConversation = findExistingConversation(targetUserId, isSelfChat);
+    if (existingConversation) {
+      console.log(`Found existing conversation: ${existingConversation.id}`);
+      return existingConversation.id;
+    }
+
+    // Handle self chat
     if (isSelfChat) {
-      const existingSelfChat = conversations.find(conv => 
-        conv.isSelfChat && conv.participants.includes(currentUser.id)
-      );
-      if (existingSelfChat) return existingSelfChat.id;
+      return new Promise<string>((resolve, reject) => {
+        socketService.emit('start_conversation', {
+          userId: currentUser.id,
+          targetUserId: currentUser.id,
+          targetUsername,
+          targetAvatar,
+          isSelfChat: true
+        }, (response: { conversationId: string; existing?: boolean }) => {
+          if (response?.conversationId) {
+            // Add conversation to local state if it's new
+            if (!response.existing) {
+              const newConversation: Conversation = {
+                id: response.conversationId,
+                name: "Yourself",
+                participants: [currentUser.id],
+                avatar: targetAvatar,
+                unreadCount: 0,
+                isGroup: false,
+                isSelfChat: true
+              };
+              setConversations(prev => [...prev, newConversation]);
+            }
+            resolve(response.conversationId);
+          } else {
+            reject(new Error('Failed to create self chat'));
+          }
+        });
+      });
+    }
+
+    // Handle regular conversation with duplicate prevention
+    return new Promise<string>((resolve, reject) => {
+      // Check if we're already creating a conversation with this user
+      const pendingKey = `${currentUser.id}-${targetUserId}`;
+      if (pendingConversations[pendingKey]) {
+        reject(new Error('Conversation creation already in progress'));
+        return;
+      }
 
       const tempId = `temp-${Date.now()}`;
-      const tempConversation = {
+      
+      // Mark as pending
+      setPendingConversations(prev => ({ ...prev, [pendingKey]: tempId }));
+      
+      // Add temporary conversation
+      const tempConversation: Conversation = {
         id: tempId,
-        participants: [currentUser.id],
-        name: "Yourself",
-        avatar: currentUser.avatar,
-        lastMessage: '',
-        lastMessageTime: '',
+        name: targetUsername,
+        participants: [currentUser.id, targetUserId],
+        avatar: targetAvatar,
         unreadCount: 0,
-        isGroup: false,
-        isSelfChat: true
+        isGroup: false
       };
 
       setConversations(prev => [...prev, tempConversation]);
-      setPendingConversations(prev => ({ ...prev, "self": tempId }));
 
-      try {
-        const serverId = await new Promise<string>((resolve, reject) => {
-          socketService.emit('start_conversation', {
-            userId: currentUser.id,
-            targetUserId: currentUser.id,
-            targetUsername,
-            targetAvatar,
-            isSelfChat: true
-          }, (response: { conversationId: string }) => {
-            if (response?.conversationId) {
-              resolve(response.conversationId);
-            } else {
-              reject(new Error('Conversation creation failed'));
-            }
-          });
-        });
-
-        handleServerAck(tempId, serverId);
-        return serverId;
-      } catch (error) {
-        console.error('Conversation creation error:', error);
-        setConversations(prev => prev.filter(conv => conv.id !== tempId));
-        throw error;
-      }
-    }
-
-    return new Promise<string | null>((resolve) => {
       socketService.emit('start_conversation', {
         userId: currentUser.id,
         targetUserId,
         targetUsername,
         targetAvatar
+      }, (response: { conversationId: string; existing?: boolean }) => {
+        // Clear pending state
+        setPendingConversations(prev => {
+          const newPending = { ...prev };
+          delete newPending[pendingKey];
+          return newPending;
+        });
+
+        if (response?.conversationId) {
+          if (response.existing) {
+            // Remove temp conversation and use existing one
+            setConversations(prev => prev.filter(c => c.id !== tempId));
+          } else {
+            // Update temp conversation with server ID
+            handleServerAck(tempId, response.conversationId);
+          }
+          resolve(response.conversationId);
+        } else {
+          // Remove temp conversation on failure
+          setConversations(prev => prev.filter(c => c.id !== tempId));
+          reject(new Error('Failed to start conversation'));
+        }
       });
-      resolve(null);
     });
-  }, [currentUser, conversations, handleServerAck]);
+  }, [currentUser, findExistingConversation, handleServerAck, pendingConversations]);
 
   const loadMessages = useCallback((conversationId: string) => {
-    socketService.emit('get_messages', conversationId);
+    socketService.emit('get_messages', conversationId).catch(error => {
+      console.error('Load messages error:', error);
+    });
   }, []);
 
   const value = {

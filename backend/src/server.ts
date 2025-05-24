@@ -124,6 +124,20 @@ const broadcastOnlineUsers = () => {
   io.emit('online_users', usersList);
 };
 
+// Helper function to find existing conversation
+const findExistingConversation = (userId1: string, userId2: string, isSelfChat: boolean = false): string | null => {
+  for (const [id, conv] of conversations.entries()) {
+    if (isSelfChat && conv.isSelfChat && conv.participants.includes(userId1)) {
+      return id;
+    }
+    if (!isSelfChat && !conv.isSelfChat && !conv.isGroup && 
+        conv.participants.includes(userId1) && conv.participants.includes(userId2)) {
+      return id;
+    }
+  }
+  return null;
+};
+
 // Socket.IO connection handler
 io.on('connection', (socket: Socket) => {
   const user = socket.data.user;
@@ -163,6 +177,46 @@ io.on('connection', (socket: Socket) => {
     }
   });
 
+  // Handle get messages request
+  socket.on('get_messages', (conversationId: string, callback) => {
+    try {
+      const actualConversationId = tempIdMap.get(conversationId) || conversationId;
+      const conversationMessages = messages.get(actualConversationId) || [];
+      console.log(`Sending ${conversationMessages.length} messages for conversation ${actualConversationId}`);
+      
+      if (callback && typeof callback === 'function') {
+        callback({ success: true, messages: conversationMessages });
+      }
+    } catch (error) {
+      console.error('Error getting messages:', error);
+      if (callback && typeof callback === 'function') {
+        callback({ success: false, error: 'Failed to get messages' });
+      }
+    }
+  });
+
+  // Handle mark read request
+  socket.on('mark_read', (data: { conversationId: string; userId: string }, callback) => {
+    try {
+      const actualConversationId = tempIdMap.get(data.conversationId) || data.conversationId;
+      const conversation = conversations.get(actualConversationId);
+      
+      if (conversation) {
+        conversation.unreadCount = 0;
+        console.log(`Marked conversation ${actualConversationId} as read for user ${data.userId}`);
+      }
+      
+      if (callback && typeof callback === 'function') {
+        callback({ success: true });
+      }
+    } catch (error) {
+      console.error('Error marking as read:', error);
+      if (callback && typeof callback === 'function') {
+        callback({ success: false, error: 'Failed to mark as read' });
+      }
+    }
+  });
+
   // Session reconnection handler
   socket.on('session_reconnect', () => {
     const currentUser = activeUsers.get(user._id);
@@ -173,7 +227,7 @@ io.on('connection', (socket: Socket) => {
     }
   });
 
-  // Conversation creation handler
+  // Enhanced conversation creation handler with duplicate prevention
   socket.on('start_conversation', async (
     data: {
       targetUserId: string;
@@ -185,16 +239,36 @@ io.on('connection', (socket: Socket) => {
     callback
   ) => {
     try {
-      const translator = short();
       const isSelfChat = !!data.isSelfChat;
       const userId = user._id;
 
-      // Validate target user exists
+      // Check for existing conversation first
+      const existingConversationId = findExistingConversation(userId, data.targetUserId, isSelfChat);
+      
+      if (existingConversationId) {
+        console.log(`Found existing conversation: ${existingConversationId}`);
+        
+        // Join the existing conversation room
+        socket.join(existingConversationId);
+        
+        if (callback && typeof callback === 'function') {
+          callback({ 
+            success: true,
+            conversationId: existingConversationId,
+            tempId: data.tempId,
+            existing: true
+          });
+        }
+        return;
+      }
+
+      // Validate target user exists for non-self chats
       if (!isSelfChat) {
         const targetUser = await User.findById(data.targetUserId);
         if (!targetUser) throw new Error('Target user not found');
       }
 
+      const translator = short();
       const finalConversationId = isSelfChat ? 
         `self-${userId}-${translator.new()}` : 
         translator.new();
@@ -225,20 +299,29 @@ io.on('connection', (socket: Socket) => {
       socket.join(finalConversationId);
       if (!isSelfChat) {
         const targetSocket = activeUsers.get(data.targetUserId)?.socketId;
-        if (targetSocket) io.sockets.sockets.get(targetSocket)?.join(finalConversationId);
+        if (targetSocket) {
+          io.sockets.sockets.get(targetSocket)?.join(finalConversationId);
+        }
       }
 
-      callback({ 
-        success: true,
-        conversationId: finalConversationId,
-        tempId: data.tempId
-      });
+      console.log(`Created new conversation: ${finalConversationId}`);
+
+      if (callback && typeof callback === 'function') {
+        callback({ 
+          success: true,
+          conversationId: finalConversationId,
+          tempId: data.tempId,
+          existing: false
+        });
+      }
     } catch (error) {
       console.error('Conversation creation error:', error);
-      callback({ 
-        success: false, 
-        error: error instanceof Error ? error.message : 'Unknown error'
-      });
+      if (callback && typeof callback === 'function') {
+        callback({ 
+          success: false, 
+          error: error instanceof Error ? error.message : 'Unknown error'
+        });
+      }
     }
   });
 
@@ -254,7 +337,10 @@ io.on('connection', (socket: Socket) => {
       const actualConversationId = tempIdMap.get(data.conversationId) || data.conversationId;
       const conversation = conversations.get(actualConversationId);
 
-      if (!conversation) throw new Error('Conversation not found');
+      if (!conversation) {
+        console.error(`Conversation not found: ${data.conversationId} -> ${actualConversationId}`);
+        throw new Error('Conversation not found');
+      }
 
       // Create new message with timestamp
       const newMessage = {
@@ -282,13 +368,19 @@ io.on('connection', (socket: Socket) => {
         message: newMessage
       });
 
-      callback({ success: true });
+      console.log(`Message sent to conversation ${actualConversationId}`);
+
+      if (callback && typeof callback === 'function') {
+        callback({ success: true });
+      }
     } catch (error) {
       console.error('Message sending error:', error);
-      callback({ 
-        success: false, 
-        error: error instanceof Error ? error.message : 'Unknown error'
-      });
+      if (callback && typeof callback === 'function') {
+        callback({ 
+          success: false, 
+          error: error instanceof Error ? error.message : 'Unknown error'
+        });
+      }
     }
   });
 
