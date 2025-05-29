@@ -30,6 +30,7 @@ interface Conversation {
   isGroup: boolean;
   isSelfChat?: boolean;
   isPinned?: boolean;
+  isBot?: boolean;
   latestMessage?: Message;
 }
 
@@ -37,9 +38,16 @@ interface ConversationsContextType {
   conversations: Conversation[];
   activeConversation: string | null;
   messages: Record<string, Message[]>;
+  pendingConversations: Record<string, string>;
   setActiveConversation: (id: string | null) => void;
   sendMessage: (conversationId: string, text: string, replyTo?: Message) => Promise<void>;
-  startNewConversation: (targetUserId: string, targetUsername: string, targetAvatar: string, isSelfChat?: boolean) => Promise<string | null>;
+  startNewConversation: (
+    targetUserId: string, 
+    targetUsername: string, 
+    targetAvatar: string, 
+    isSelfChat?: boolean,
+    isBot?: boolean
+  ) => Promise<string | null>;
   loadMessages: (conversationId: string) => Promise<void>;
   markAsRead: (conversationId: string, messageIds: string[]) => Promise<void>;
   pinConversation: (conversationId: string) => Promise<void>;
@@ -50,9 +58,9 @@ interface ConversationsContextType {
 const ConversationsContext = createContext<ConversationsContextType | undefined>(undefined);
 
 const generateTempId = () => {
-  const hex = crypto.getRandomValues(new Uint8Array(12))
-    .reduce((str, byte) => str + byte.toString(16).padStart(2, '0'), '');
-  return hex.padEnd(24, '0').substring(0, 24);
+  return Array.from({length: 24}, () => 
+    Math.floor(Math.random() * 16).toString(16)
+  ).join('');
 };
 
 export const useConversations = () => {
@@ -177,14 +185,50 @@ export const ConversationsProvider = ({ children }: ConversationsProviderProps) 
     };
 
     const handleNewMessage = (data: { conversationId: string, message: Message }) => {
+      // Prevent processing bot's own messages
+      if (data.message.senderId === 'bot') return;
+
       setMessages(prev => {
         const existingMessages = prev[data.conversationId] || [];
         const exists = existingMessages.some(msg => msg.id === data.message.id);
+        
         return exists ? prev : {
           ...prev,
           [data.conversationId]: [...existingMessages, data.message]
         };
       });
+
+      // Check if this is a bot conversation and generate response
+      const conversation = conversations.find(c => c.id === data.conversationId);
+      if (conversation?.isBot) {
+        setTimeout(() => {
+          const botMessage = {
+            id: generateTempId(),
+            text: "I'm an AI assistant. How can I help you today?",
+            senderId: 'bot',
+            timestamp: new Date().toISOString(),
+            status: 'delivered' as const,
+            readBy: [currentUser.id]
+          };
+
+          setMessages(prev => ({
+            ...prev,
+            [data.conversationId]: [...(prev[data.conversationId] || []), botMessage]
+          }));
+
+          // Update conversation's last message
+          setConversations(prev => 
+            prev.map(conv => 
+              conv.id === data.conversationId ? {
+                ...conv,
+                lastMessage: botMessage.text,
+                lastMessageTime: botMessage.timestamp,
+                latestMessage: botMessage
+              } : conv
+            )
+          );
+        }, 1000);
+      }
 
       if (data.message.senderId !== currentUser.id) {
         setConversations(prev => 
@@ -216,6 +260,7 @@ export const ConversationsProvider = ({ children }: ConversationsProviderProps) 
         const uniqueNewMessages = data.messages.filter(newMsg => 
           !existingMessages.some(existingMsg => existingMsg.id === newMsg.id)
         );
+        
         return {
           ...prev,
           [data.conversationId]: [...existingMessages, ...uniqueNewMessages]
@@ -230,7 +275,10 @@ export const ConversationsProvider = ({ children }: ConversationsProviderProps) 
         delete newMessages[data.conversationId];
         return newMessages;
       });
-      if (activeConversation === data.conversationId) setActiveConversation(null);
+      
+      if (activeConversation === data.conversationId) {
+        setActiveConversation(null);
+      }
     };
 
     socketService.on('new_conversation', handleNewConversation);
@@ -248,7 +296,7 @@ export const ConversationsProvider = ({ children }: ConversationsProviderProps) 
       socketService.off('conversation_messages', handleConversationMessages);
       socketService.off('conversation_deleted', handleConversationDeleted);
     };
-  }, [isAuthenticated, currentUser, activeConversation]);
+  }, [isAuthenticated, currentUser, activeConversation, conversations]);
 
   const sendMessage = useCallback(async (conversationId: string, text: string, replyTo?: Message) => {
     if (!currentUser) return;
@@ -281,7 +329,8 @@ export const ConversationsProvider = ({ children }: ConversationsProviderProps) 
     targetUserId: string,
     targetUsername: string,
     targetAvatar: string,
-    isSelfChat: boolean = false
+    isSelfChat: boolean = false,
+    isBot: boolean = false
   ) => {
     if (!currentUser) return null;
 
@@ -321,7 +370,7 @@ export const ConversationsProvider = ({ children }: ConversationsProviderProps) 
 
     return new Promise<string>((resolve, reject) => {
       const pendingKey = `${currentUser.id}-${targetUserId}`;
-      if (pendingConversations && pendingConversations[pendingKey]) {
+      if (pendingConversations[pendingKey]) {
         reject(new Error('Conversation creation already in progress'));
         return;
       }
@@ -336,7 +385,8 @@ export const ConversationsProvider = ({ children }: ConversationsProviderProps) 
         avatar: targetAvatar,
         unreadCount: new Map(),
         isGroup: false,
-        isPinned: false
+        isPinned: false,
+        isBot: isBot
       };
 
       setConversations(prev => [...prev, tempConversation]);
@@ -345,7 +395,8 @@ export const ConversationsProvider = ({ children }: ConversationsProviderProps) 
         userId: currentUser.id,
         targetUserId,
         targetUsername,
-        targetAvatar
+        targetAvatar,
+        isBot
       }, (response: { conversationId: string; existing?: boolean }) => {
         setPendingConversations(prev => {
           const newPending = { ...prev };
@@ -372,7 +423,7 @@ export const ConversationsProvider = ({ children }: ConversationsProviderProps) 
     try {
       if (!conversationId) throw new Error('No conversation ID provided');
       
-      const isPending = Object.values(pendingConversations || {}).includes(conversationId);
+      const isPending = Object.values(pendingConversations).includes(conversationId);
       if (!isPending && !isValidObjectId(conversationId)) {
         throw new Error('Invalid conversation ID');
       }
@@ -386,6 +437,7 @@ export const ConversationsProvider = ({ children }: ConversationsProviderProps) 
         const uniqueNewMessages = newMessages.filter((newMsg: Message) => 
           !existingMessages.some(existingMsg => existingMsg.id === newMsg.id)
         );
+        
         return {
           ...prev,
           [conversationId]: [...existingMessages, ...uniqueNewMessages]
@@ -459,6 +511,7 @@ export const ConversationsProvider = ({ children }: ConversationsProviderProps) 
     conversations,
     activeConversation,
     messages,
+    pendingConversations,
     setActiveConversation,
     sendMessage,
     startNewConversation,

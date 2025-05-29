@@ -6,6 +6,12 @@ import { useOnlineUsers } from '../../contexts/OnlineUsersContext';
 import { useAuth } from '../../contexts/AuthContext';
 import './ChatList.css';
 
+const generateTempId = () => {
+  return Array.from({length: 24}, () => 
+    Math.floor(Math.random() * 16).toString(16)
+  ).join('');
+};
+
 const ChatList = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [showActions, setShowActions] = useState<string | null>(null);
@@ -19,7 +25,8 @@ const ChatList = () => {
     markAsRead,
     pinConversation,
     deleteConversation,
-    getUnreadCount
+    getUnreadCount,
+    startNewConversation
   } = useConversations();
   const { isUserOnline } = useOnlineUsers();
   const { isAuthenticated, currentUser } = useAuth();
@@ -36,6 +43,8 @@ const ChatList = () => {
         conversationKey = `self-${currentUser.id}`;
       } else if (conv.isGroup) {
         conversationKey = `group-${conv.participants.sort().join('-')}`;
+      } else if (conv.isBot) {
+        conversationKey = `bot-${currentUser.id}`;
       } else {
         const sortedParticipants = [...conv.participants].sort();
         conversationKey = `chat-${sortedParticipants.join('-')}`;
@@ -154,6 +163,35 @@ const ChatList = () => {
     }
   };
 
+  const createBotConversation = async () => {
+    if (!currentUser) return;
+    
+    const botConversation = {
+      id: generateTempId(),
+      name: "AI Assistant 🤖",
+      participants: [currentUser.id, 'bot'],
+      avatar: '/bot-avatar.png',
+      isBot: true,
+      isSelfChat: false,
+      isGroup: false,
+      unreadCount: new Map(),
+      latestMessage: undefined
+    };
+
+    try {
+      await startNewConversation(
+        'bot',
+        "AI Assistant 🤖",
+        "/bot-avatar.png",
+        false,
+        true
+      );
+      setActiveConversation(botConversation.id);
+    } catch (error) {
+      console.error('Failed to create bot conversation:', error);
+    }
+  };
+
   return (
     <div className="chat-list" onClick={handleBackdropClick}>
       <div className="chat-list-header">
@@ -201,7 +239,7 @@ const ChatList = () => {
 
         <AnimatePresence>
           {isAuthenticated && filteredChats.map(chat => {
-            const otherParticipantId = !chat.isGroup && !chat.isSelfChat
+            const otherParticipantId = !chat.isGroup && !chat.isSelfChat && !chat.isBot
               ? chat.participants.find(id => id !== currentUser?.id) 
               : null;
             const isOnline = otherParticipantId ? isUserOnline(otherParticipantId) : false;
@@ -231,6 +269,8 @@ const ChatList = () => {
                     <div className="avatar-placeholder">
                       {chat.isGroup ? (
                         <div className="group-avatar">{chat.name.substring(0, 1).toUpperCase()}</div>
+                      ) : chat.isBot ? (
+                        <div className="bot-avatar">🤖</div>
                       ) : (
                         <div className="user-avatar-text">
                           {chat.name.split(' ').map(n => n[0]?.toUpperCase() || '').join('').substring(0, 2)}
@@ -238,11 +278,14 @@ const ChatList = () => {
                       )}
                     </div>
                   )}
-                  {!chat.isGroup && !chat.isSelfChat && isOnline && (
+                  {!chat.isGroup && !chat.isSelfChat && !chat.isBot && isOnline && (
                     <div className="online-indicator" title="Online"></div>
                   )}
                   {chat.isSelfChat && (
                     <div className="self-chat-indicator" title="Self chat"></div>
+                  )}
+                  {chat.isBot && (
+                    <div className="bot-indicator" title="AI Assistant"></div>
                   )}
                   {chat.isPinned && (
                     <div className="pin-indicator" title="Pinned">
@@ -345,6 +388,20 @@ const ChatList = () => {
             >
               <h2>New Conversation</h2>
               <div className="modal-options">
+                <motion.button 
+                  className="modal-option"
+                  whileHover={{ scale: 1.03 }}
+                  whileTap={{ scale: 0.97 }}
+                  onClick={() => {
+                    setShowNewChatModal(false);
+                    createBotConversation();
+                  }}
+                >
+                  <div className="option-icon ai-icon">
+                    <span role="img" aria-label="robot">🤖</span>
+                  </div>
+                  <span>AI Assistant</span>
+                </motion.button>
                 <motion.button 
                   className="modal-option"
                   whileHover={{ scale: 1.03 }}
