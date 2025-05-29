@@ -18,20 +18,18 @@ const ChatList = () => {
     activeConversation,
     markAsRead,
     pinConversation,
-    deleteConversation
+    deleteConversation,
+    getUnreadCount
   } = useConversations();
   const { isUserOnline } = useOnlineUsers();
   const { isAuthenticated, currentUser } = useAuth();
 
-  // Enhanced conversation processing with deduplication and sorting
   const processedConversations = useMemo(() => {
     if (!currentUser) return [];
 
-    // Deduplicate conversations based on participants
     const uniqueConversations = new Map();
     
     conversations.forEach(conv => {
-      // Create a unique key for each conversation
       let conversationKey;
       
       if (conv.isSelfChat) {
@@ -39,21 +37,17 @@ const ChatList = () => {
       } else if (conv.isGroup) {
         conversationKey = `group-${conv.participants.sort().join('-')}`;
       } else {
-        // For 1:1 conversations, create key from sorted participant IDs
         const sortedParticipants = [...conv.participants].sort();
         conversationKey = `chat-${sortedParticipants.join('-')}`;
       }
 
-      // Keep the most recent conversation if duplicates exist
       if (!uniqueConversations.has(conversationKey) || 
           (conv.lastMessageTime && conv.lastMessageTime > (uniqueConversations.get(conversationKey)?.lastMessageTime || ''))) {
         uniqueConversations.set(conversationKey, conv);
       }
     });
 
-    // Convert back to array and sort by most recent activity
     return Array.from(uniqueConversations.values()).sort((a, b) => {
-      // Pinned conversations first
       if (a.isPinned && !b.isPinned) return -1;
       if (!a.isPinned && b.isPinned) return 1;
       
@@ -63,7 +57,6 @@ const ChatList = () => {
     });
   }, [conversations, currentUser]);
 
-  // Enhanced search functionality
   const filteredChats = useMemo(() => {
     return processedConversations.filter(chat => 
       chat.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -71,7 +64,6 @@ const ChatList = () => {
     );
   }, [processedConversations, searchTerm]);
 
-  // Enhanced last message text extraction
   const getLastMessageText = (lastMessage: any) => {
     if (!lastMessage) return 'Start a conversation';
     if (typeof lastMessage === 'string') return lastMessage || 'Start a conversation';
@@ -79,7 +71,6 @@ const ChatList = () => {
     return 'Start a conversation';
   };
 
-  // Enhanced time formatting
   const formatMessageTime = (timestamp: string | undefined) => {
     if (!timestamp) return '';
     
@@ -107,20 +98,18 @@ const ChatList = () => {
 
   const handleSelectChat = (chatId: string) => {
     setActiveConversation(chatId);
-    setShowActions(null); // Close any open action menus
+    setShowActions(null);
   };
 
-  // Close actions menu when clicking outside
   const handleBackdropClick = () => {
     setShowActions(null);
   };
 
-  // Action handlers
   const handleMarkAsRead = async (chatId: string) => {
     setActionLoading(chatId);
     try {
       if (markAsRead) {
-        await markAsRead(chatId);
+        await markAsRead(chatId, []); // Pass empty array to mark all as read
       }
     } catch (error) {
       console.error('Failed to mark as read:', error);
@@ -150,7 +139,6 @@ const ChatList = () => {
       try {
         if (deleteConversation) {
           await deleteConversation(chatId);
-          // If the deleted conversation was active, clear active conversation
           if (activeConversation === chatId) {
             setActiveConversation(null);
           }
@@ -220,6 +208,7 @@ const ChatList = () => {
             const lastMessageText = getLastMessageText(chat.lastMessage);
             const formattedTime = formatMessageTime(chat.lastMessageTime);
             const isActionLoading = actionLoading === chat.id;
+            const unreadCount = getUnreadCount(chat.id);
 
             return (
               <motion.div 
@@ -277,9 +266,9 @@ const ChatList = () => {
                   </div>
                   <div className="chat-message-preview">
                     <p title={lastMessageText}>{lastMessageText}</p>
-                    {chat.unreadCount > 0 && (
-                      <span className="unread-badge" title={`${chat.unreadCount} unread messages`}>
-                        {chat.unreadCount > 99 ? '99+' : chat.unreadCount}
+                    {unreadCount > 0 && (
+                      <span className="unread-badge" title={`${unreadCount} unread message${unreadCount > 1 ? 's' : ''}`}>
+                        {unreadCount > 99 ? '99+' : unreadCount}
                       </span>
                     )}
                   </div>
@@ -311,8 +300,8 @@ const ChatList = () => {
                     >
                       <button 
                         onClick={() => handleMarkAsRead(chat.id)}
-                        disabled={isActionLoading || chat.unreadCount === 0}
-                        className={chat.unreadCount === 0 ? 'disabled' : ''}
+                        disabled={isActionLoading || unreadCount === 0}
+                        className={unreadCount === 0 ? 'disabled' : ''}
                       >
                         {isActionLoading ? 'Marking...' : 'Mark as read'}
                       </button>
@@ -362,7 +351,6 @@ const ChatList = () => {
                   whileTap={{ scale: 0.97 }}
                   onClick={() => {
                     setShowNewChatModal(false);
-                    // Future: Open user selection modal
                   }}
                 >
                   <div className="option-icon">
@@ -376,7 +364,6 @@ const ChatList = () => {
                   whileTap={{ scale: 0.97 }}
                   onClick={() => {
                     setShowNewChatModal(false);
-                    // Future: Open group creation modal
                   }}
                 >
                   <div className="option-icon group-icon">

@@ -9,6 +9,8 @@ import jwt from 'jsonwebtoken';
 import authRoutes from './routes/auth';
 import userRoutes from './routes/users';
 import User from './models/User';
+import messageRoutes from './routes/messageRoutes'; // NEW
+import conversationRoutes from './routes/conversationRoutes';
 
 // Type definitions
 interface UserData {
@@ -42,6 +44,7 @@ interface Conversation {
 // Initialize Express
 const app: Express = express();
 app.use(express.json());
+app.use(express.urlencoded({ extended: true })); // For form data
 app.use(cors({
   origin: "http://localhost:5173",
   methods: ["GET", "POST", "PUT", "DELETE"],
@@ -59,6 +62,8 @@ mongoose.connect(process.env.MONGODB_URI!)
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
+app.use('/api/messages', messageRoutes); 
+app.use('/api/conversations', conversationRoutes); 
 
 // Error handling middleware
 app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {

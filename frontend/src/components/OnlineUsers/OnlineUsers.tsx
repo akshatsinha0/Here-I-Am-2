@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { FiSearch, FiMessageSquare } from 'react-icons/fi';
 import { useOnlineUsers } from '../../contexts/OnlineUsersContext';
@@ -10,40 +10,89 @@ const OnlineUsers = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [showSelfChatDialog, setShowSelfChatDialog] = useState(false);
   const { onlineUsers, searchUsers } = useOnlineUsers();
-  const { startNewConversation, setActiveConversation, conversations } = useConversations();
+  const { startNewConversation, setActiveConversation, conversations, getUnreadCount } = useConversations();
   const { isAuthenticated, currentUser } = useAuth();
 
-  const handleStartChat = (userId: string, username: string, avatar: string) => {
-    startNewConversation(userId, username, avatar);
-  };
-
-  const handleSelfChat = async () => {
-    if (currentUser) {
-      const existingSelfChat = conversations.find(conv => 
-        conv.isSelfChat && conv.participants.includes(currentUser.id)
+  const handleStartChat = async (userId: string, username: string, avatar: string) => {
+    try {
+      // Check for existing conversation first
+      const existingConv = conversations.find(conv => 
+        !conv.isGroup && 
+        !conv.isSelfChat && 
+        conv.participants.includes(userId)
       );
 
-      if (existingSelfChat) {
-        setActiveConversation(existingSelfChat.id);
+      if (existingConv) {
+        setActiveConversation(existingConv.id);
       } else {
-        const conversationId = await startNewConversation(currentUser.id, "Yourself", currentUser.avatar, true);
+        const conversationId = await startNewConversation(userId, username, avatar);
         if (conversationId) {
           setActiveConversation(conversationId);
         }
       }
-      setShowSelfChatDialog(false);
+    } catch (error) {
+      console.error('Failed to start conversation:', error);
     }
   };
 
-  const searchResults = searchTerm ? searchUsers(searchTerm) : onlineUsers;
-  const selfProfile = currentUser ? {
-    userId: currentUser.id,
-    username: "Yourself",
-    email: currentUser.email,
-    avatar: currentUser.avatar,
-    socketId: "",
-    lastSeen: ""
-  } : null;
+  const handleSelfChat = async () => {
+    if (currentUser) {
+      try {
+        const existingSelfChat = conversations.find(conv => 
+          conv.isSelfChat && conv.participants.includes(currentUser.id)
+        );
+
+        if (existingSelfChat) {
+          setActiveConversation(existingSelfChat.id);
+        } else {
+          const conversationId = await startNewConversation(
+            currentUser.id, 
+            "Yourself", 
+            currentUser.avatar, 
+            true
+          );
+          if (conversationId) {
+            setActiveConversation(conversationId);
+          }
+        }
+      } catch (error) {
+        console.error('Failed to start self chat:', error);
+      } finally {
+        setShowSelfChatDialog(false);
+      }
+    }
+  };
+
+  const searchResults = useMemo(() => 
+    searchTerm ? searchUsers(searchTerm) : onlineUsers
+  , [searchTerm, onlineUsers, searchUsers]);
+
+  const selfProfile = useMemo(() => 
+    currentUser ? {
+      userId: currentUser.id,
+      username: "Yourself",
+      email: currentUser.email,
+      avatar: currentUser.avatar,
+      socketId: "",
+      lastSeen: ""
+    } : null
+  , [currentUser]);
+
+  const getConversationUnreadCount = (userId: string) => {
+    const conversation = conversations.find(conv => 
+      !conv.isGroup && 
+      !conv.isSelfChat && 
+      conv.participants.includes(userId)
+    );
+    return conversation ? getUnreadCount(conversation.id) : 0;
+  };
+
+  const getSelfChatUnreadCount = () => {
+    const selfChat = conversations.find(conv => 
+      conv.isSelfChat && conv.participants.includes(currentUser?.id || '')
+    );
+    return selfChat ? getUnreadCount(selfChat.id) : 0;
+  };
 
   return (
     <div className="online-users">
@@ -86,6 +135,11 @@ const OnlineUsers = () => {
                   </div>
                 )}
               </div>
+              {getSelfChatUnreadCount() > 0 && (
+                <div className="unread-badge">
+                  {getSelfChatUnreadCount() > 99 ? '99+' : getSelfChatUnreadCount()}
+                </div>
+              )}
             </div>
             
             <div className="user-info">
@@ -104,44 +158,53 @@ const OnlineUsers = () => {
           </motion.div>
         )}
 
-        {isAuthenticated && searchResults.map(user => (
-          <motion.div 
-            key={user.userId}
-            className="user-item"
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            whileHover={{ backgroundColor: 'var(--bg-secondary)' }}
-          >
-            <div className="user-avatar-container">
-              <div className="user-avatar">
-                {user.avatar ? (
-                  <img src={user.avatar} alt={user.username} />
-                ) : (
-                  <div className="avatar-placeholder">
-                    {user.username.split(' ').map(n => n[0]).join('')}
+        {isAuthenticated && searchResults.map(user => {
+          const unreadCount = getConversationUnreadCount(user.userId);
+          
+          return (
+            <motion.div 
+              key={user.userId}
+              className="user-item"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              whileHover={{ backgroundColor: 'var(--bg-secondary)' }}
+            >
+              <div className="user-avatar-container">
+                <div className="user-avatar">
+                  {user.avatar ? (
+                    <img src={user.avatar} alt={user.username} />
+                  ) : (
+                    <div className="avatar-placeholder">
+                      {user.username.split(' ').map(n => n[0]).join('')}
+                    </div>
+                  )}
+                  <div className="user-status-indicator"></div>
+                </div>
+                {unreadCount > 0 && (
+                  <div className="unread-badge">
+                    {unreadCount > 99 ? '99+' : unreadCount}
                   </div>
                 )}
-                <div className="user-status-indicator"></div>
               </div>
-            </div>
-            
-            <div className="user-info">
-              <h3>{user.username}</h3>
-              <p>{user.email}</p>
-            </div>
-            
-            {user.userId !== currentUser?.id && (
-              <motion.button 
-                className="add-chat-button"
-                whileHover={{ scale: 1.1 }}
-                whileTap={{ scale: 0.9 }}
-                onClick={() => handleStartChat(user.userId, user.username, user.avatar)}
-              >
-                <FiMessageSquare />
-              </motion.button>
-            )}
-          </motion.div>
-        ))}
+              
+              <div className="user-info">
+                <h3>{user.username}</h3>
+                <p>{user.email}</p>
+              </div>
+              
+              {user.userId !== currentUser?.id && (
+                <motion.button 
+                  className="add-chat-button"
+                  whileHover={{ scale: 1.1 }}
+                  whileTap={{ scale: 0.9 }}
+                  onClick={() => handleStartChat(user.userId, user.username, user.avatar)}
+                >
+                  <FiMessageSquare />
+                </motion.button>
+              )}
+            </motion.div>
+          );
+        })}
 
         {isAuthenticated && searchResults.length === 0 && (
           <div className="no-users-message">
@@ -168,8 +231,18 @@ const OnlineUsers = () => {
                 <h3>Chat with Yourself</h3>
                 <p>You can send messages, notes, and links to yourself</p>
                 <div className="dialog-actions">
-                  <button onClick={() => setShowSelfChatDialog(false)}>Cancel</button>
-                  <button onClick={handleSelfChat}>Start Chat</button>
+                  <button 
+                    className="cancel-button"
+                    onClick={() => setShowSelfChatDialog(false)}
+                  >
+                    Cancel
+                  </button>
+                  <button 
+                    className="confirm-button"
+                    onClick={handleSelfChat}
+                  >
+                    Start Chat
+                  </button>
                 </div>
               </motion.div>
             </motion.div>

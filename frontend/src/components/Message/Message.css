@@ -234,3 +234,29 @@
 .message-status {
   margin-left: 4px;
 }
+
+.unread-indicator {
+  position: absolute;
+  left: -12px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent-primary);
+  animation: pulse 1.5s infinite;
+}
+
+.message.unread {
+  font-weight: 600;
+  background: var(--unread-bg);
+}
+
+@keyframes pulse {
+  0% { transform: translateY(-50%) scale(0.8); opacity: 0.6; }
+  50% { transform: translateY(-50%) scale(1.2); opacity: 1; }
+  100% { transform: translateY(-50%) scale(0.8); opacity: 0.6; }
+}
+
+
+/*checking*/

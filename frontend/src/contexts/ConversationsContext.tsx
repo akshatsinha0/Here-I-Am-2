@@ -2,13 +2,18 @@ import { createContext, useState, useContext, useEffect, useCallback } from 'rea
 import type { ReactNode } from 'react';
 import socketService from '../services/SocketService';
 import { useAuth } from './AuthContext';
+import { isValidObjectId } from '../utils/validation';
+import { v4 } from 'uuid';
+
 
 interface Message {
   id: string;
+  conversationId: string;
   text: string;
   senderId: string;
   timestamp: string;
   status: 'sent' | 'delivered' | 'read';
+  readBy: string[];
   replyTo?: {
     id: string;
     text: string;
@@ -22,11 +27,12 @@ interface Conversation {
   participants: string[];
   lastMessage?: string;
   lastMessageTime?: string;
-  unreadCount: number;
+  unreadCount: Map<string, number>;
   avatar: string;
   isGroup: boolean;
   isSelfChat?: boolean;
   isPinned?: boolean;
+  latestMessage?: Message;
 }
 
 interface ConversationsContextType {
@@ -36,10 +42,11 @@ interface ConversationsContextType {
   setActiveConversation: (id: string | null) => void;
   sendMessage: (conversationId: string, text: string, replyTo?: Message) => Promise<void>;
   startNewConversation: (targetUserId: string, targetUsername: string, targetAvatar: string, isSelfChat?: boolean) => Promise<string | null>;
-  loadMessages: (conversationId: string) => void;
-  markAsRead: (conversationId: string) => Promise<void>;
+  loadMessages: (conversationId: string) => Promise<void>;
+  markAsRead: (conversationId: string, messageIds: string[]) => Promise<void>;
   pinConversation: (conversationId: string) => Promise<void>;
   deleteConversation: (conversationId: string) => Promise<void>;
+  getUnreadCount: (conversationId: string) => number;
 }
 
 const ConversationsContext = createContext<ConversationsContextType | undefined>(undefined);
@@ -94,29 +101,71 @@ export const ConversationsProvider = ({ children }: ConversationsProviderProps) 
   }, []);
 
   useEffect(() => {
+   // In the useEffect loading conversations
+const loadConversations = async () => {
+  if (!currentUser?.id) return;
+  
+  try {
+    // WRONG URL: ❌ /api/messages/conversations/...
+    // CORRECT URL: ✅ /api/conversations/user/...
+    const response = await fetch(`/api/conversations/user/${currentUser.id}`);
+    
+    if (response.ok) {
+      const conversationsData = await response.json();
+      
+      // Properly handle participant IDs and unreadCount
+      const formattedConversations = conversationsData.map((conv: any) => ({
+        ...conv,
+        unreadCount: new Map(Object.entries(conv.unreadCount)),
+        participants: conv.participants.map((p: any) => p._id || p.id), // Handle both _id and id
+        latestMessage: conv.latestMessage?._id || conv.latestMessage?.id
+      }));
+
+      setConversations(formattedConversations);
+      
+      // Reload messages for active conversation if needed
+      if (activeConversation) {
+        await loadMessages(activeConversation);
+      }
+    }
+  } catch (error) {
+    console.error('Failed to load conversations:', error);
+  }
+};
+
+
+    if (isAuthenticated) {
+      loadConversations();
+    }
+  }, [isAuthenticated, currentUser?.id]);
+
+  useEffect(() => {
     if (!isAuthenticated || !currentUser) return;
 
     const handleNewConversation = (conversation: Conversation) => {
       setConversations(prev => {
         const exists = prev.some(c => c.id === conversation.id);
-        return exists ? prev : [...prev, conversation];
+        return exists ? prev : [...prev, {
+          ...conversation,
+          unreadCount: new Map(Object.entries(conversation.unreadCount))
+        }];
       });
     };
 
     const handleConversationUpdated = (data: { 
       conversationId: string, 
-      lastMessage?: string,
-      lastMessageTime?: string,
-      unreadCount?: number,
+      latestMessage?: Message,
+      unreadCount?: Record<string, number>,
       isPinned?: boolean
     }) => {
       setConversations(prev => 
         prev.map(conv => 
           conv.id === data.conversationId ? {
             ...conv,
-            lastMessage: data.lastMessage || conv.lastMessage,
-            lastMessageTime: data.lastMessageTime || conv.lastMessageTime,
-            unreadCount: data.unreadCount ?? conv.unreadCount,
+            latestMessage: data.latestMessage,
+            lastMessage: data.latestMessage?.text,
+            lastMessageTime: data.latestMessage?.timestamp,
+            unreadCount: data.unreadCount ? new Map(Object.entries(data.unreadCount)) : conv.unreadCount,
             isPinned: data.isPinned ?? conv.isPinned
           } : conv
         )
@@ -124,17 +173,52 @@ export const ConversationsProvider = ({ children }: ConversationsProviderProps) 
     };
 
     const handleNewMessage = (data: { conversationId: string, message: Message }) => {
+      setMessages(prev => {
+        const existingMessages = prev[data.conversationId] || [];
+        const exists = existingMessages.some(msg => msg.id === data.message.id);
+        
+        return exists ? prev : {
+          ...prev,
+          [data.conversationId]: [...existingMessages, data.message]
+        };
+      });
+
+      if (data.message.senderId !== currentUser.id) {
+        setConversations(prev => 
+          prev.map(conv => {
+            if (conv.id === data.conversationId) {
+              const newUnread = new Map(conv.unreadCount);
+              const currentCount = newUnread.get(currentUser.id) || 0;
+              newUnread.set(currentUser.id, currentCount + 1);
+              return { ...conv, unreadCount: newUnread };
+            }
+            return conv;
+          })
+        );
+      }
+    };
+
+    const handleMessagesRead = (data: { conversationId: string, userId: string, messageIds: string[] }) => {
       setMessages(prev => ({
         ...prev,
-        [data.conversationId]: [...(prev[data.conversationId] || []), data.message]
+        [data.conversationId]: prev[data.conversationId]?.map(msg => 
+          data.messageIds.includes(msg.id) ? { ...msg, readBy: [...msg.readBy, data.userId] } : msg
+        ) || []
       }));
     };
 
     const handleConversationMessages = (data: { conversationId: string, messages: Message[] }) => {
-      setMessages(prev => ({
-        ...prev,
-        [data.conversationId]: data.messages
-      }));
+      setMessages(prev => {
+        const existingMessages = prev[data.conversationId] || [];
+        const uniqueNewMessages = data.messages.filter(newMsg => 
+          !existingMessages.some(existingMsg => existingMsg.id === newMsg.id)
+        );
+        
+        return {
+          ...prev,
+          [data.conversationId]: [...existingMessages, ...uniqueNewMessages]
+        };
+      });
     };
 
     const handleConversationDeleted = (data: { conversationId: string }) => {
@@ -145,7 +229,6 @@ export const ConversationsProvider = ({ children }: ConversationsProviderProps) 
         return newMessages;
       });
       
-      // Clear active conversation if it was deleted
       if (activeConversation === data.conversationId) {
         setActiveConversation(null);
       }
@@ -154,6 +237,7 @@ export const ConversationsProvider = ({ children }: ConversationsProviderProps) 
     socketService.on('new_conversation', handleNewConversation);
     socketService.on('conversation_updated', handleConversationUpdated);
     socketService.on('new_message', handleNewMessage);
+    socketService.on('messages_read', handleMessagesRead);
     socketService.on('conversation_messages', handleConversationMessages);
     socketService.on('conversation_deleted', handleConversationDeleted);
 
@@ -161,6 +245,7 @@ export const ConversationsProvider = ({ children }: ConversationsProviderProps) 
       socketService.off('new_conversation', handleNewConversation);
       socketService.off('conversation_updated', handleConversationUpdated);
       socketService.off('new_message', handleNewMessage);
+      socketService.off('messages_read', handleMessagesRead);
       socketService.off('conversation_messages', handleConversationMessages);
       socketService.off('conversation_deleted', handleConversationDeleted);
     };
@@ -170,23 +255,16 @@ export const ConversationsProvider = ({ children }: ConversationsProviderProps) 
     if (activeConversation && currentUser) {
       setConversations(prev => 
         prev.map(conv => 
-          conv.id === activeConversation ? { ...conv, unreadCount: 0 } : conv
+          conv.id === activeConversation ? {
+            ...conv,
+            unreadCount: new Map(conv.unreadCount).set(currentUser.id, 0)
+          } : conv
         )
       );
-
-      const markRead = () => {
-        socketService.emit('mark_read', { 
-          conversationId: activeConversation,
-          userId: currentUser.id 
-        }).catch(error => {
-          console.error('Mark read error:', error);
-        });
-      };
 
       if (!messages[activeConversation]?.length) {
         loadMessages(activeConversation);
       }
-      markRead();
     }
   }, [activeConversation, currentUser, messages]);
 
@@ -225,14 +303,9 @@ export const ConversationsProvider = ({ children }: ConversationsProviderProps) 
   ) => {
     if (!currentUser) return null;
 
-    // Check for existing conversation first
     const existingConversation = findExistingConversation(targetUserId, isSelfChat);
-    if (existingConversation) {
-      console.log(`Found existing conversation: ${existingConversation.id}`);
-      return existingConversation.id;
-    }
+    if (existingConversation) return existingConversation.id;
 
-    // Handle self chat
     if (isSelfChat) {
       return new Promise<string>((resolve, reject) => {
         socketService.emit('start_conversation', {
@@ -243,14 +316,13 @@ export const ConversationsProvider = ({ children }: ConversationsProviderProps) 
           isSelfChat: true
         }, (response: { conversationId: string; existing?: boolean }) => {
           if (response?.conversationId) {
-            // Add conversation to local state if it's new
             if (!response.existing) {
               const newConversation: Conversation = {
                 id: response.conversationId,
                 name: "Yourself",
                 participants: [currentUser.id],
                 avatar: targetAvatar,
-                unreadCount: 0,
+                unreadCount: new Map(),
                 isGroup: false,
                 isSelfChat: true,
                 isPinned: false
@@ -265,27 +337,21 @@ export const ConversationsProvider = ({ children }: ConversationsProviderProps) 
       });
     }
 
-    // Handle regular conversation with duplicate prevention
     return new Promise<string>((resolve, reject) => {
-      // Check if we're already creating a conversation with this user
       const pendingKey = `${currentUser.id}-${targetUserId}`;
       if (pendingConversations[pendingKey]) {
         reject(new Error('Conversation creation already in progress'));
         return;
       }
-
-      const tempId = `temp-${Date.now()}`;
-      
-      // Mark as pending
+      const tempId = v4().replace(/-/g, '').substring(0, 24);
       setPendingConversations(prev => ({ ...prev, [pendingKey]: tempId }));
       
-      // Add temporary conversation
       const tempConversation: Conversation = {
         id: tempId,
         name: targetUsername,
         participants: [currentUser.id, targetUserId],
         avatar: targetAvatar,
-        unreadCount: 0,
+        unreadCount: new Map(),
         isGroup: false,
         isPinned: false
       };
@@ -298,7 +364,6 @@ export const ConversationsProvider = ({ children }: ConversationsProviderProps) 
         targetUsername,
         targetAvatar
       }, (response: { conversationId: string; existing?: boolean }) => {
-        // Clear pending state
         setPendingConversations(prev => {
           const newPending = { ...prev };
           delete newPending[pendingKey];
@@ -307,15 +372,12 @@ export const ConversationsProvider = ({ children }: ConversationsProviderProps) 
 
         if (response?.conversationId) {
           if (response.existing) {
-            // Remove temp conversation and use existing one
             setConversations(prev => prev.filter(c => c.id !== tempId));
           } else {
-            // Update temp conversation with server ID
             handleServerAck(tempId, response.conversationId);
           }
           resolve(response.conversationId);
         } else {
-          // Remove temp conversation on failure
           setConversations(prev => prev.filter(c => c.id !== tempId));
           reject(new Error('Failed to start conversation'));
         }
@@ -323,109 +385,89 @@ export const ConversationsProvider = ({ children }: ConversationsProviderProps) 
     });
   }, [currentUser, findExistingConversation, handleServerAck, pendingConversations]);
 
-  const loadMessages = useCallback((conversationId: string) => {
-    socketService.emit('get_messages', conversationId).catch(error => {
+  const loadMessages = useCallback(async (conversationId: string) => {
+    try {
+      if (!isValidObjectId(conversationId)) {
+        throw new Error('Invalid conversation ID');
+      }
+      const response = await fetch(`/api/messages/${conversationId}`);
+      if (!response.ok) throw new Error('Failed to load messages');
+      const newMessages = await response.json();
+      
+      setMessages(prev => {
+        const existingMessages = prev[conversationId] || [];
+        const uniqueNewMessages = newMessages.filter((newMsg: Message) => 
+          !existingMessages.some(existingMsg => existingMsg.id === newMsg.id)
+        );
+        
+        return {
+          ...prev,
+          [conversationId]: [...existingMessages, ...uniqueNewMessages]
+        };
+      });
+    } catch (error) {
       console.error('Load messages error:', error);
-    });
+      throw error;
+    }
   }, []);
 
-  // New method: Mark conversation as read
-  const markAsRead = useCallback(async (conversationId: string) => {
+  const markAsRead = useCallback(async (conversationId: string, messageIds: string[]) => {
     if (!currentUser) return;
 
     try {
-      // Update local state immediately for instant feedback
+      setMessages(prev => ({
+        ...prev,
+        [conversationId]: prev[conversationId]?.map(msg => 
+          messageIds.includes(msg.id) ? { ...msg, readBy: [...msg.readBy, currentUser.id] } : msg
+        ) || []
+      }));
+
       setConversations(prev => 
         prev.map(conv => 
-          conv.id === conversationId ? { ...conv, unreadCount: 0 } : conv
+          conv.id === conversationId ? {
+            ...conv,
+            unreadCount: new Map(conv.unreadCount).set(currentUser.id, 0)
+          } : conv
         )
       );
 
-      // Emit to server
-      await socketService.emit('mark_read', { 
-        conversationId,
-        userId: currentUser.id 
+      await fetch('/api/messages/mark-read', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          conversationId,
+          messageIds,
+          userId: currentUser.id 
+        })
       });
-
-      console.log(`Marked conversation ${conversationId} as read`);
     } catch (error) {
-      console.error('Failed to mark conversation as read:', error);
+      console.error('Failed to mark messages as read:', error);
       throw error;
     }
   }, [currentUser]);
 
-  // New method: Pin/Unpin conversation
   const pinConversation = useCallback(async (conversationId: string) => {
-    if (!currentUser) return;
+    setConversations(prev => 
+      prev.map(conv => 
+        conv.id === conversationId ? { ...conv, isPinned: !conv.isPinned } : conv
+      )
+    );
+  }, []);
 
-    try {
-      // Get current pin status
-      const conversation = conversations.find(conv => conv.id === conversationId);
-      if (!conversation) throw new Error('Conversation not found');
-
-      const newPinnedStatus = !conversation.isPinned;
-
-      // Update local state immediately for instant feedback
-      setConversations(prev => 
-        prev.map(conv => 
-          conv.id === conversationId ? { ...conv, isPinned: newPinnedStatus } : conv
-        )
-      );
-
-      // Emit to server (if you want server-side persistence)
-      await socketService.emit('pin_conversation', { 
-        conversationId,
-        userId: currentUser.id,
-        isPinned: newPinnedStatus
-      }).catch(() => {
-        // Server doesn't handle pin yet, so we'll just keep it local
-        console.log('Pin state saved locally');
-      });
-
-      console.log(`${newPinnedStatus ? 'Pinned' : 'Unpinned'} conversation ${conversationId}`);
-    } catch (error) {
-      console.error('Failed to pin/unpin conversation:', error);
-      throw error;
-    }
-  }, [currentUser, conversations]);
-
-  // New method: Delete conversation
   const deleteConversation = useCallback(async (conversationId: string) => {
-    if (!currentUser) return;
+    setConversations(prev => prev.filter(conv => conv.id !== conversationId));
+    setMessages(prev => {
+      const newMessages = { ...prev };
+      delete newMessages[conversationId];
+      return newMessages;
+    });
+    if (activeConversation === conversationId) setActiveConversation(null);
+  }, [activeConversation]);
 
-    try {
-      // Remove from local state immediately for instant feedback
-      setConversations(prev => prev.filter(conv => conv.id !== conversationId));
-      
-      // Remove messages from local state
-      setMessages(prev => {
-        const newMessages = { ...prev };
-        delete newMessages[conversationId];
-        return newMessages;
-      });
-
-      // Clear active conversation if it was deleted
-      if (activeConversation === conversationId) {
-        setActiveConversation(null);
-      }
-
-      // Emit to server (if you want server-side deletion)
-      await socketService.emit('delete_conversation', { 
-        conversationId,
-        userId: currentUser.id 
-      }).catch(() => {
-        // Server doesn't handle delete yet, so we'll just keep it local
-        console.log('Conversation deleted locally');
-      });
-
-      console.log(`Deleted conversation ${conversationId}`);
-    } catch (error) {
-      console.error('Failed to delete conversation:', error);
-      
-      // Revert local state on error
-      throw error;
-    }
-  }, [currentUser, activeConversation]);
+  const getUnreadCount = useCallback((conversationId: string) => {
+    const conversation = conversations.find(c => c.id === conversationId);
+    return conversation?.unreadCount.get(currentUser?.id || '') || 0;
+  }, [conversations, currentUser]);
 
   const value = {
     conversations,
@@ -437,8 +479,9 @@ export const ConversationsProvider = ({ children }: ConversationsProviderProps) 
     loadMessages,
     markAsRead,
     pinConversation,
-    deleteConversation
+    deleteConversation,
+    getUnreadCount
   };
 
   return <ConversationsContext.Provider value={value}>{children}</ConversationsContext.Provider>;
-};
+}

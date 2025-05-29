@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo } from 'react';
+import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { FiArrowLeft, FiMoreVertical, FiPaperclip, FiSmile, FiSend, FiMic, FiChevronDown, FiX } from 'react-icons/fi';
 import { useConversations } from '../../contexts/ConversationsContext';
@@ -6,6 +6,7 @@ import { useOnlineUsers } from '../../contexts/OnlineUsersContext';
 import { useAuth } from '../../contexts/AuthContext';
 import Message from '../Message/Message';
 import './ChatArea.css';
+import { isValidObjectId } from '../../utils/validation';
 
 interface MessageType {
   id: string;
@@ -13,6 +14,7 @@ interface MessageType {
   senderId: string;
   timestamp: string;
   status: 'sent' | 'delivered' | 'read';
+  unread?: boolean;
   replyTo?: {
     id: string;
     text: string;
@@ -28,7 +30,8 @@ const ChatArea = ({ onBack }: { onBack: () => void }) => {
     sendMessage, 
     conversations, 
     loadMessages,
-    setActiveConversation
+    setActiveConversation,
+    markMessagesAsRead
   } = useConversations();
   const { isUserOnline } = useOnlineUsers();
   
@@ -38,88 +41,132 @@ const ChatArea = ({ onBack }: { onBack: () => void }) => {
   const [showAttachMenu, setShowAttachMenu] = useState(false);
   const [replyingTo, setReplyingTo] = useState<MessageType | null>(null);
   const [connectionError, setConnectionError] = useState(false);
+  const [isScrolling, setIsScrolling] = useState(false);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const scrollTimeout = useRef<NodeJS.Timeout | null>(null);
 
-  const activeChat = activeConversation 
-    ? conversations.find(c => c.id === activeConversation)
-    : null;
-
+  const activeChat = useMemo(() => 
+    activeConversation ? conversations.find(c => c.id === activeConversation) : null,
+    [activeConversation, conversations]
+  );
 
   const activeMessages = useMemo(
     () => (activeConversation ? messages[activeConversation] || [] : []),
     [activeConversation, messages]
   );
 
-  // Load messages when active conversation changes
+  // Load messages and mark as read when conversation changes
   useEffect(() => {
-    if (activeConversation) {
+    const loadAndMarkRead = async () => {
+      if (!activeConversation || !currentUser?.id) return;
+      
       try {
-        loadMessages(activeConversation);
+        if (!isValidObjectId(activeConversation)) {
+          throw new Error('Invalid conversation ID');
+      }
+      
+        await loadMessages(activeConversation);
+        const messageIds = activeMessages.map(m => m.id);
+        if (messageIds.length > 0) {
+          await markMessagesAsRead(activeConversation, messageIds);
+        }
       } catch (error) {
         console.error('Error loading messages:', error);
         setConnectionError(true);
         setTimeout(() => setConnectionError(false), 3000);
       }
+    };
+
+    loadAndMarkRead();
+  }, [activeConversation, currentUser?.id]);
+
+  // Scroll handling with debouncing
+  const handleScroll = useCallback(() => {
+    const container = messagesContainerRef.current;
+    if (!container) return;
+
+    const { scrollTop, scrollHeight, clientHeight } = container;
+    const isAtBottom = scrollHeight - scrollTop - clientHeight < 100;
+    
+    setShowScrollToBottom(!isAtBottom);
+    setIsScrolling(true);
+
+    if (scrollTimeout.current) {
+      clearTimeout(scrollTimeout.current);
     }
-  }, [activeConversation, loadMessages]);
+    
+    scrollTimeout.current = setTimeout(() => {
+      setIsScrolling(false);
+    }, 200);
+  }, []);
 
-  // Handle scroll behavior
-  useEffect(() => {
-    scrollToBottom();
-  }, [activeMessages]);
-
-  // Scroll listener for "scroll to bottom" button
+  // Scroll listener setup
   useEffect(() => {
     const container = messagesContainerRef.current;
     if (!container) return;
-    
-    const handleScroll = () => {
-      const { scrollTop, scrollHeight, clientHeight } = container;
-      const isAtBottom = scrollHeight - scrollTop - clientHeight < 100;
-      setShowScrollToBottom(!isAtBottom);
-    };
-    
+
     container.addEventListener('scroll', handleScroll);
     return () => container.removeEventListener('scroll', handleScroll);
+  }, [handleScroll]);
+
+  // Auto-scroll to bottom when not manually scrolling
+  useEffect(() => {
+    if (!isScrolling) {
+      scrollToBottom();
+    }
+  }, [activeMessages, isScrolling]);
+
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
+    messagesEndRef.current?.scrollIntoView({ behavior });
   }, []);
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  };
-
-  const handleSendMessage = async () => {
-    if (!activeConversation || !newMessage.trim()) return;
+  // Enhanced send message with persistence
+  const handleSendMessage = useCallback(async () => {
+    if (!activeConversation || !newMessage.trim() || !currentUser?.id) return;
+    
     try {
-      // If your sendMessage only accepts text, pass only the message string
-      await sendMessage(activeConversation, newMessage);
+      const tempId = Date.now().toString();
+      const newMessageObj = {
+        id: tempId,
+        text: newMessage,
+        senderId: currentUser.id,
+        timestamp: new Date().toISOString(),
+        status: 'sent' as const,
+        unread: true
+      };
+
+      await sendMessage(activeConversation, newMessageObj);
       setNewMessage('');
       setReplyingTo(null);
+
+      if (!isScrolling) {
+        setTimeout(() => scrollToBottom('auto'), 50);
+      }
     } catch (error) {
       console.error('Message send error:', error);
       setConnectionError(true);
       setTimeout(() => setConnectionError(false), 3000);
-      
-      // Attempt to reconnect if temporary conversation
-      if (activeConversation.startsWith('temp-')) {
-        const originalConv = activeConversation;
-        setActiveConversation(null);
-        setTimeout(() => setActiveConversation(originalConv), 100);
-      }
     }
-  };
+  }, [activeConversation, newMessage, currentUser?.id, isScrolling]);
 
-  const getChatName = () => {
-    if (!activeChat) return '';
-    return activeChat.isGroup ? activeChat.name : activeChat.name;
-  };
+  const getChatName = useCallback(() => {
+    return activeChat?.isGroup ? activeChat.name : activeChat?.participantsName || '';
+  }, [activeChat]);
 
-  const getOnlineStatus = () => {
+  const getOnlineStatus = useCallback(() => {
     if (!activeChat || activeChat.isGroup) return false;
     const otherParticipant = activeChat.participants.find(id => id !== currentUser?.id);
     return otherParticipant ? isUserOnline(otherParticipant) : false;
-  };
+  }, [activeChat, currentUser?.id, isUserOnline]);
+
+  // Mark messages as read when visible
+  const handleMessageVisible = useCallback((messageId: string) => {
+    if (activeConversation && currentUser?.id) {
+      markMessagesAsRead(activeConversation, [messageId]);
+    }
+  }, [activeConversation, currentUser?.id, markMessagesAsRead]);
 
   if (!activeConversation || !activeChat) {
     return (
@@ -131,8 +178,6 @@ const ChatArea = ({ onBack }: { onBack: () => void }) => {
       </div>
     );
   }
-
-  const isSelfChat = activeChat.isSelfChat;
 
   return (
     <div className="chat-area">
@@ -149,7 +194,7 @@ const ChatArea = ({ onBack }: { onBack: () => void }) => {
           <div className="chat-info">
             <h2>{getChatName()}</h2>
             <p className="chat-status">
-              {isSelfChat ? 'Notes to self' : 
+              {activeChat.isSelfChat ? 'Notes to self' : 
                 (activeChat.isGroup ? `${activeChat.participants.length} participants` : 
                   (getOnlineStatus() ? 'Online' : 'Offline'))}
             </p>
@@ -174,7 +219,7 @@ const ChatArea = ({ onBack }: { onBack: () => void }) => {
 
       <div className="messages-container" ref={messagesContainerRef}>
         <div className="messages-wrapper">
-          {isSelfChat && activeMessages.length === 0 && (
+          {activeChat.isSelfChat && activeMessages.length === 0 && (
             <div className="self-chat-welcome">
               <div className="welcome-message">
                 <h3>Welcome to your personal space</h3>
@@ -194,6 +239,7 @@ const ChatArea = ({ onBack }: { onBack: () => void }) => {
                 isOwnMessage={isOwnMessage}
                 showAvatar={showAvatar}
                 onReply={() => setReplyingTo(message)}
+                onMarkAsRead={() => handleMessageVisible(message.id)}
               />
             );
           })}
@@ -204,7 +250,7 @@ const ChatArea = ({ onBack }: { onBack: () => void }) => {
           {showScrollToBottom && (
             <motion.button 
               className="scroll-to-bottom"
-              onClick={scrollToBottom}
+              onClick={() => scrollToBottom()}
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: 10 }}
@@ -267,7 +313,7 @@ const ChatArea = ({ onBack }: { onBack: () => void }) => {
         <div className="message-input-container">
           <input 
             type="text" 
-            placeholder={isSelfChat ? "Write a note to yourself..." : "Type a message..."} 
+            placeholder={activeChat?.isSelfChat ? "Write a note to yourself..." : "Type a message..."}
             value={newMessage}
             onChange={(e) => setNewMessage(e.target.value)}
             onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
