@@ -3,8 +3,6 @@ import type { ReactNode } from 'react';
 import socketService from '../services/SocketService';
 import { useAuth } from './AuthContext';
 import { isValidObjectId } from '../utils/validation';
-import { v4 } from 'uuid';
-
 
 interface Message {
   id: string;
@@ -51,6 +49,12 @@ interface ConversationsContextType {
 
 const ConversationsContext = createContext<ConversationsContextType | undefined>(undefined);
 
+const generateTempId = () => {
+  const hex = crypto.getRandomValues(new Uint8Array(12))
+    .reduce((str, byte) => str + byte.toString(16).padStart(2, '0'), '');
+  return hex.padEnd(24, '0').substring(0, 24);
+};
+
 export const useConversations = () => {
   const context = useContext(ConversationsContext);
   if (context === undefined) {
@@ -70,7 +74,6 @@ export const ConversationsProvider = ({ children }: ConversationsProviderProps) 
   const [pendingConversations, setPendingConversations] = useState<Record<string, string>>({});
   const { currentUser, isAuthenticated } = useAuth();
 
-  // Helper function to find existing conversation
   const findExistingConversation = useCallback((targetUserId: string, isSelfChat: boolean = false): Conversation | null => {
     if (!currentUser) return null;
     
@@ -85,6 +88,10 @@ export const ConversationsProvider = ({ children }: ConversationsProviderProps) 
   }, [conversations, currentUser]);
 
   const handleServerAck = useCallback((tempId: string, serverId: string) => {
+    if (!isValidObjectId(serverId)) {
+      console.error('Invalid server ID received:', serverId);
+      return;
+    }
     setConversations(prev => 
       prev.map(conv => 
         conv.id === tempId ? { ...conv, id: serverId } : conv
@@ -101,43 +108,40 @@ export const ConversationsProvider = ({ children }: ConversationsProviderProps) 
   }, []);
 
   useEffect(() => {
-   // In the useEffect loading conversations
-const loadConversations = async () => {
-  if (!currentUser?.id) return;
-  
-  try {
-    // WRONG URL: ❌ /api/messages/conversations/...
-    // CORRECT URL: ✅ /api/conversations/user/...
-    const response = await fetch(`/api/conversations/user/${currentUser.id}`);
-    
-    if (response.ok) {
-      const conversationsData = await response.json();
+    const loadConversations = async () => {
+      if (!currentUser?.id) return;
       
-      // Properly handle participant IDs and unreadCount
-      const formattedConversations = conversationsData.map((conv: any) => ({
-        ...conv,
-        unreadCount: new Map(Object.entries(conv.unreadCount)),
-        participants: conv.participants.map((p: any) => p._id || p.id), // Handle both _id and id
-        latestMessage: conv.latestMessage?._id || conv.latestMessage?.id
-      }));
+      try {
+        const response = await fetch(`/api/conversations/user/${currentUser.id}`);
+        if (!response.ok) throw new Error('Failed to load conversations');
+        
+        const conversationsData = await response.json();
+        const formattedConversations = conversationsData.map((conv: any) => ({
+          ...conv,
+          unreadCount: new Map(Object.entries(conv.unreadCount)),
+          participants: conv.participants.map((p: any) => p._id || p.id),
+          latestMessage: conv.latestMessage?._id || conv.latestMessage?.id
+        }));
 
-      setConversations(formattedConversations);
-      
-      // Reload messages for active conversation if needed
-      if (activeConversation) {
-        await loadMessages(activeConversation);
+        setConversations(prev => {
+          const existingIds = new Set(prev.map(c => c.id));
+          const newConvs = formattedConversations.filter((c: Conversation) => !existingIds.has(c.id));
+          return [...prev, ...newConvs];
+        });
+
+        if (activeConversation && isValidObjectId(activeConversation)) {
+          await loadMessages(activeConversation);
+        }
+      } catch (error) {
+        console.error('Failed to load conversations:', error);
+        setConversations(prev => prev.filter(c => !c.id.startsWith('temp-')));
       }
-    }
-  } catch (error) {
-    console.error('Failed to load conversations:', error);
-  }
-};
-
+    };
 
     if (isAuthenticated) {
       loadConversations();
     }
-  }, [isAuthenticated, currentUser?.id]);
+  }, [isAuthenticated, currentUser?.id, activeConversation]);
 
   useEffect(() => {
     if (!isAuthenticated || !currentUser) return;
@@ -176,7 +180,6 @@ const loadConversations = async () => {
       setMessages(prev => {
         const existingMessages = prev[data.conversationId] || [];
         const exists = existingMessages.some(msg => msg.id === data.message.id);
-        
         return exists ? prev : {
           ...prev,
           [data.conversationId]: [...existingMessages, data.message]
@@ -213,7 +216,6 @@ const loadConversations = async () => {
         const uniqueNewMessages = data.messages.filter(newMsg => 
           !existingMessages.some(existingMsg => existingMsg.id === newMsg.id)
         );
-        
         return {
           ...prev,
           [data.conversationId]: [...existingMessages, ...uniqueNewMessages]
@@ -228,10 +230,7 @@ const loadConversations = async () => {
         delete newMessages[data.conversationId];
         return newMessages;
       });
-      
-      if (activeConversation === data.conversationId) {
-        setActiveConversation(null);
-      }
+      if (activeConversation === data.conversationId) setActiveConversation(null);
     };
 
     socketService.on('new_conversation', handleNewConversation);
@@ -250,23 +249,6 @@ const loadConversations = async () => {
       socketService.off('conversation_deleted', handleConversationDeleted);
     };
   }, [isAuthenticated, currentUser, activeConversation]);
-
-  useEffect(() => {
-    if (activeConversation && currentUser) {
-      setConversations(prev => 
-        prev.map(conv => 
-          conv.id === activeConversation ? {
-            ...conv,
-            unreadCount: new Map(conv.unreadCount).set(currentUser.id, 0)
-          } : conv
-        )
-      );
-
-      if (!messages[activeConversation]?.length) {
-        loadMessages(activeConversation);
-      }
-    }
-  }, [activeConversation, currentUser, messages]);
 
   const sendMessage = useCallback(async (conversationId: string, text: string, replyTo?: Message) => {
     if (!currentUser) return;
@@ -339,11 +321,12 @@ const loadConversations = async () => {
 
     return new Promise<string>((resolve, reject) => {
       const pendingKey = `${currentUser.id}-${targetUserId}`;
-      if (pendingConversations[pendingKey]) {
+      if (pendingConversations && pendingConversations[pendingKey]) {
         reject(new Error('Conversation creation already in progress'));
         return;
       }
-      const tempId = v4().replace(/-/g, '').substring(0, 24);
+
+      const tempId = generateTempId();
       setPendingConversations(prev => ({ ...prev, [pendingKey]: tempId }));
       
       const tempConversation: Conversation = {
@@ -387,19 +370,22 @@ const loadConversations = async () => {
 
   const loadMessages = useCallback(async (conversationId: string) => {
     try {
-      if (!isValidObjectId(conversationId)) {
+      if (!conversationId) throw new Error('No conversation ID provided');
+      
+      const isPending = Object.values(pendingConversations || {}).includes(conversationId);
+      if (!isPending && !isValidObjectId(conversationId)) {
         throw new Error('Invalid conversation ID');
       }
+
       const response = await fetch(`/api/messages/${conversationId}`);
       if (!response.ok) throw new Error('Failed to load messages');
-      const newMessages = await response.json();
       
+      const newMessages = await response.json();
       setMessages(prev => {
         const existingMessages = prev[conversationId] || [];
         const uniqueNewMessages = newMessages.filter((newMsg: Message) => 
           !existingMessages.some(existingMsg => existingMsg.id === newMsg.id)
         );
-        
         return {
           ...prev,
           [conversationId]: [...existingMessages, ...uniqueNewMessages]
@@ -409,7 +395,7 @@ const loadConversations = async () => {
       console.error('Load messages error:', error);
       throw error;
     }
-  }, []);
+  }, [pendingConversations]);
 
   const markAsRead = useCallback(async (conversationId: string, messageIds: string[]) => {
     if (!currentUser) return;
@@ -484,4 +470,4 @@ const loadConversations = async () => {
   };
 
   return <ConversationsContext.Provider value={value}>{children}</ConversationsContext.Provider>;
-}
+};
