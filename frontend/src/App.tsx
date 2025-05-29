@@ -16,6 +16,7 @@ const AppContent = () => {
   const [showSidebar, setShowSidebar] = useState(true);
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [authView, setAuthView] = useState<'signin' | 'signup'>('signin');
+  const [activeTab, setActiveTab] = useState('chats');
   
   const { isAuthenticated } = useAuth();
   const { activeConversation } = useConversations();
@@ -30,6 +31,11 @@ const AppContent = () => {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
+  const handleTabChange = (tab: string) => {
+    setActiveTab(tab);
+    // Add logic here to handle tab changes if needed
+  };
+
   return (
     <div className="app-container">
       <Navigation 
@@ -39,6 +45,7 @@ const AppContent = () => {
           setAuthView('signin');
           setShowAuthModal(true);
         }}
+        onTabChange={handleTabChange}
       />
 
       <AnimatePresence mode="wait">
