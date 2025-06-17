@@ -1,4 +1,4 @@
-// src/contexts/OnlineUsersContext.tsx
+
 import { createContext, useState, useContext, useEffect, useCallback, useRef } from 'react';
 import type { ReactNode } from 'react';
 import socketService from '../services/SocketService';
@@ -45,7 +45,7 @@ export const OnlineUsersProvider = ({ children }: OnlineUsersProviderProps) => {
   const { isAuthenticated, currentUser, socketConnected } = useAuth();
   const retryTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Clear retry timers on unmount
+  
   useEffect(() => {
     return () => {
       if (retryTimeoutRef.current) {
@@ -54,7 +54,7 @@ export const OnlineUsersProvider = ({ children }: OnlineUsersProviderProps) => {
     };
   }, []);
 
-  // Setup online users listener
+  
   useEffect(() => {
     if (!isAuthenticated || !currentUser?.id) {
       setAllOnlineUsers([]);
@@ -80,34 +80,34 @@ export const OnlineUsersProvider = ({ children }: OnlineUsersProviderProps) => {
       setIsLoading(false);
       setError(null);
       
-      // Store all users
+      
       setAllOnlineUsers(users);
       
-      // Filter out current user from display
+      
       const filtered = users.filter(user => 
         user.userId && currentUser.id && user.userId !== currentUser.id
       );
       setFilteredUsers(filtered);
     };
 
-    // Listen for server broadcasts
+    
     socketService.on('online_users', handleOnlineUsers);
     
     console.log("Online users listener registered");
 
-    // Cleanup
+    
     return () => {
       socketService.off('online_users', handleOnlineUsers);
     };
   }, [isAuthenticated, currentUser?.id, socketConnected]);
 
-  // Manual refresh function (for future use)
+  
   const refreshOnlineUsers = useCallback(async () => {
     if (!isAuthenticated || !currentUser?.id || !socketConnected) {
       return Promise.resolve();
     }
 
-    // Server should auto-broadcast, so this is just a placeholder
+    
     console.log("Online users refresh requested");
     return Promise.resolve();
   }, [isAuthenticated, currentUser?.id, socketConnected]);
